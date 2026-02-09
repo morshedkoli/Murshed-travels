@@ -6,8 +6,7 @@ import { loadEnvConfig } from '@next/env';
 
 loadEnvConfig(process.cwd());
 
-// Hardcoded URI for script execution if modules not loaded
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/bizledger';
+const MONGODB_URI = process.env.MONGODB_URI;
 
 async function seed() {
     if (!MONGODB_URI) {

@@ -1,10 +1,14 @@
 import mongoose from 'mongoose';
 
-// Derived from nslookup results and .env.local
-const directUri = 'mongodb://travels:travels@ac-yixaxxa-shard-00-00.f39myhh.mongodb.net:27017,ac-yixaxxa-shard-00-01.f39myhh.mongodb.net:27017,ac-yixaxxa-shard-00-02.f39myhh.mongodb.net:27017/?ssl=true&authSource=admin&retryWrites=true&w=majority';
+const directUri = process.env.MONGODB_URI;
+
+if (!directUri) {
+    console.error('MONGODB_URI is not defined');
+    process.exit(1);
+}
 
 console.log('Testing direct connection string (no SRV)...');
-console.log('URI:', directUri.replace('travels:travels', '*****:*****'));
+console.log('Using MONGODB_URI from environment');
 
 mongoose.connect(directUri)
     .then(() => {

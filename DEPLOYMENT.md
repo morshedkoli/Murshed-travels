@@ -13,7 +13,7 @@ Add the following environment variables in your Vercel project settings:
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `MONGODB_URI` | MongoDB connection string | `mongodb+srv://username:password@cluster.mongodb.net/dbname` |
+| `MONGODB_URI` | MongoDB connection string (use one URI only) | `mongodb://username:password@cluster-shard-00-00.mongodb.net:27017,cluster-shard-00-01.mongodb.net:27017,cluster-shard-00-02.mongodb.net:27017/bizledger?ssl=true&authSource=admin&retryWrites=true&w=majority` |
 | `JWT_SECRET` | Secret key for JWT tokens | Generate a random string (32+ characters) |
 
 #### Generate JWT Secret:
@@ -31,6 +31,9 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 5. Get the connection string and replace password
 
 ### 4. Deployment Steps
+
+Important: In Vercel, define only one database variable: `MONGODB_URI`.
+Do not add alternate names like `MONGO_URI`, `MONGODB_URL`, or multiple URI variants.
 
 #### Option A: Deploy via Vercel Dashboard
 
@@ -138,7 +141,7 @@ After deployment:
 Create a `.env.local` file locally (DO NOT commit this):
 
 ```env
-MONGODB_URI=mongodb+srv://username:password@cluster.mongodb.net/dbname?retryWrites=true&w=majority
+MONGODB_URI=mongodb://username:password@cluster-shard-00-00.mongodb.net:27017,cluster-shard-00-01.mongodb.net:27017,cluster-shard-00-02.mongodb.net:27017/bizledger?ssl=true&authSource=admin&retryWrites=true&w=majority
 JWT_SECRET=your-super-secret-jwt-key-min-32-chars
 ```
 
