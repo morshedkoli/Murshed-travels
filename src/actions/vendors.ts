@@ -68,7 +68,8 @@ export async function getVendors() {
         .from('vendors')
         .select(`
             *,
-            vendor_service_categories(category)
+            vendor_service_categories(category),
+            vendor_service_templates(*)
         `)
         .order('created_at', { ascending: false });
 
@@ -82,7 +83,7 @@ export async function getVendors() {
         name: vendor.name,
         phone: vendor.phone,
         serviceType: vendorCategoryLabels[(vendor.vendor_service_categories?.[0]?.category as VendorCategory) || 'other'],
-        serviceTemplates: [], // Will be fetched separately
+        serviceTemplates: (vendor.vendor_service_templates || []).map(toTemplatePayload),
         balance: vendor.balance,
         createdAt: vendor.created_at,
     }));
