@@ -1,10 +1,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import connect from '@/lib/db';
-import Account from '@/models/Account';
-import Customer from '@/models/Customer';
-import Transaction from '@/models/Transaction';
+import { supabase } from '@/lib/supabase';
 
 type IncomeInput = {
     date: string;
@@ -38,30 +35,36 @@ function revalidateIncomeViews() {
 }
 
 export async function getIncomeEntries() {
-    await connect();
+    const { data: incomes, error } = await supabase
+        .from('transactions')
+        .select(`
+            *,
+            accounts:account_id (name),
+            customers:customer_id (name)
+        `)
+        .eq('type', 'income')
+        .order('date', { ascending: false });
 
-    const incomes = await Transaction.find({ type: 'income' })
-        .sort({ date: -1, createdAt: -1 })
-        .populate('accountId', 'name')
-        .populate({ path: 'customerId', select: 'name', strictPopulate: false });
+    if (error) {
+        console.error('Error fetching income entries:', error);
+        return [];
+    }
 
-    return incomes.map((income) => ({
-        _id: income._id.toString(),
-        date: income.date.toISOString(),
+    return (incomes || []).map((income) => ({
+        _id: income.id,
+        date: income.date,
         amount: income.amount,
         category: income.category,
-        accountId: income.accountId?._id?.toString?.() ?? '',
-        accountName: income.accountId?.name ?? 'Unknown Account',
-        customerId: income.customerId?._id?.toString?.() ?? '',
-        customerName: income.customerId?.name ?? '',
-        description: income.description ?? '',
+        accountId: income.account_id || '',
+        accountName: income.accounts?.name || 'Unknown Account',
+        customerId: income.customer_id || '',
+        customerName: income.customers?.name || '',
+        description: income.description || '',
     }));
 }
 
 export async function createIncome(data: IncomeInput) {
     try {
-        await connect();
-
         const date = normalizeDate(data.date);
         if (!date) return { error: 'Valid date is required' };
 
@@ -76,30 +79,54 @@ export async function createIncome(data: IncomeInput) {
 
         const customerId = normalizeText(data.customerId);
 
-        const account = await Account.findById(accountId);
+        // Verify account exists
+        const { data: account } = await supabase
+            .from('accounts')
+            .select('*')
+            .eq('id', accountId)
+            .single();
+
         if (!account) {
             return { error: 'Selected account does not exist' };
         }
 
+        // Verify customer if provided
         if (customerId) {
-            const customer = await Customer.findById(customerId);
+            const { data: customer } = await supabase
+                .from('customers')
+                .select('id')
+                .eq('id', customerId)
+                .single();
+
             if (!customer) {
                 return { error: 'Selected customer does not exist' };
             }
         }
 
-        await Transaction.create({
-            date,
-            amount,
-            type: 'income',
-            category,
-            businessId: 'travel',
-            accountId,
-            customerId,
-            description: normalizeText(data.description),
-        });
+        // Create transaction
+        const { error: transactionError } = await supabase
+            .from('transactions')
+            .insert({
+                date: date.toISOString(),
+                amount,
+                type: 'income',
+                category,
+                business_id: 'travel',
+                account_id: accountId,
+                customer_id: customerId || null,
+                description: normalizeText(data.description) || null,
+            });
 
-        await Account.findByIdAndUpdate(accountId, { $inc: { balance: amount } });
+        if (transactionError) {
+            console.error('Create transaction error:', transactionError);
+            return { error: 'Failed to create income record' };
+        }
+
+        // Update account balance
+        await supabase
+            .from('accounts')
+            .update({ balance: account.balance + amount })
+            .eq('id', accountId);
 
         revalidateIncomeViews();
         return { success: true };
@@ -111,8 +138,6 @@ export async function createIncome(data: IncomeInput) {
 
 export async function updateIncome(id: string, data: IncomeInput) {
     try {
-        await connect();
-
         const date = normalizeDate(data.date);
         if (!date) return { error: 'Valid date is required' };
 
@@ -127,45 +152,94 @@ export async function updateIncome(id: string, data: IncomeInput) {
 
         const customerId = normalizeText(data.customerId);
 
-        const income = await Transaction.findOne({ _id: id, type: 'income' });
+        // Fetch existing income
+        const { data: income } = await supabase
+            .from('transactions')
+            .select('*')
+            .eq('id', id)
+            .eq('type', 'income')
+            .single();
+
         if (!income) {
             return { error: 'Income record not found' };
         }
 
-        const account = await Account.findById(accountId);
+        // Verify account exists
+        const { data: account } = await supabase
+            .from('accounts')
+            .select('*')
+            .eq('id', accountId)
+            .single();
+
         if (!account) {
             return { error: 'Selected account does not exist' };
         }
 
+        // Verify customer if provided
         if (customerId) {
-            const customer = await Customer.findById(customerId);
+            const { data: customer } = await supabase
+                .from('customers')
+                .select('id')
+                .eq('id', customerId)
+                .single();
+
             if (!customer) {
                 return { error: 'Selected customer does not exist' };
             }
         }
 
-        const oldAccountId = income.accountId.toString();
+        const oldAccountId = income.account_id;
         const oldAmount = income.amount;
 
+        // Handle account balance updates
         if (oldAccountId === accountId) {
             const delta = amount - oldAmount;
             if (delta !== 0) {
-                await Account.findByIdAndUpdate(accountId, { $inc: { balance: delta } });
+                await supabase
+                    .from('accounts')
+                    .update({ balance: account.balance + delta })
+                    .eq('id', accountId);
             }
         } else {
-            await Account.findByIdAndUpdate(oldAccountId, { $inc: { balance: -oldAmount } });
-            await Account.findByIdAndUpdate(accountId, { $inc: { balance: amount } });
+            // Restore old account balance
+            const { data: oldAccount } = await supabase
+                .from('accounts')
+                .select('*')
+                .eq('id', oldAccountId)
+                .single();
+
+            if (oldAccount) {
+                await supabase
+                    .from('accounts')
+                    .update({ balance: oldAccount.balance - oldAmount })
+                    .eq('id', oldAccountId);
+            }
+
+            // Update new account balance
+            await supabase
+                .from('accounts')
+                .update({ balance: account.balance + amount })
+                .eq('id', accountId);
         }
 
-        income.date = date;
-        income.amount = amount;
-        income.category = category;
-        income.businessId = 'travel';
-        income.accountId = accountId;
-        income.customerId = customerId;
-        income.description = normalizeText(data.description);
+        // Update transaction
+        const { error } = await supabase
+            .from('transactions')
+            .update({
+                date: date.toISOString(),
+                amount,
+                category,
+                business_id: 'travel',
+                account_id: accountId,
+                customer_id: customerId || null,
+                description: normalizeText(data.description) || null,
+            })
+            .eq('id', id);
 
-        await income.save();
+        if (error) {
+            console.error('Update transaction error:', error);
+            return { error: 'Failed to update income record' };
+        }
 
         revalidateIncomeViews();
         return { success: true };
@@ -177,15 +251,37 @@ export async function updateIncome(id: string, data: IncomeInput) {
 
 export async function deleteIncome(id: string) {
     try {
-        await connect();
+        // Fetch existing income
+        const { data: income } = await supabase
+            .from('transactions')
+            .select('*')
+            .eq('id', id)
+            .eq('type', 'income')
+            .single();
 
-        const income = await Transaction.findOne({ _id: id, type: 'income' });
         if (!income) {
             return { error: 'Income record not found' };
         }
 
-        await Account.findByIdAndUpdate(income.accountId, { $inc: { balance: -income.amount } });
-        await Transaction.deleteOne({ _id: id });
+        // Update account balance
+        const { data: account } = await supabase
+            .from('accounts')
+            .select('*')
+            .eq('id', income.account_id)
+            .single();
+
+        if (account) {
+            await supabase
+                .from('accounts')
+                .update({ balance: account.balance - income.amount })
+                .eq('id', income.account_id);
+        }
+
+        // Delete transaction
+        await supabase
+            .from('transactions')
+            .delete()
+            .eq('id', id);
 
         revalidateIncomeViews();
         return { success: true };

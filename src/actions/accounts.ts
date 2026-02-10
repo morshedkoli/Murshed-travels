@@ -1,21 +1,27 @@
 'use server';
 
-import Account from '@/models/Account';
-import connect from '@/lib/db';
+import { supabase } from '@/lib/supabase';
 import { revalidatePath } from 'next/cache';
 
 export async function getAccounts() {
-    await connect();
-    const accounts = await Account.find({}).sort({ createdAt: -1 });
-    // Convert to plain object to avoid hydration issues with dates/objectIds
+    const { data: accounts, error } = await supabase
+        .from('accounts')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+    if (error) {
+        console.error('Error fetching accounts:', error);
+        return [];
+    }
+
     return accounts.map(acc => ({
-        _id: acc._id.toString(),
+        _id: acc.id,
         name: acc.name,
         type: acc.type,
         balance: acc.balance,
-        bankName: acc.bankName,
-        accountNumber: acc.accountNumber,
-        createdAt: acc.createdAt.toISOString(),
+        bankName: acc.bank_name,
+        accountNumber: acc.account_number,
+        createdAt: acc.created_at,
     }));
 }
 
@@ -27,14 +33,27 @@ export async function createAccount(data: {
     accountNumber?: string;
 }) {
     try {
-        await connect();
-
         // Basic validation
         if (!data.name || !data.type) {
             return { error: 'Name and Type are required' };
         }
 
-        const newAccount = await Account.create(data);
+        const { data: newAccount, error } = await supabase
+            .from('accounts')
+            .insert({
+                name: data.name,
+                type: data.type,
+                balance: data.balance || 0,
+                bank_name: data.bankName || null,
+                account_number: data.accountNumber || null,
+            })
+            .select()
+            .single();
+
+        if (error) {
+            console.error('Create account error:', error);
+            return { error: 'Failed to create account' };
+        }
 
         revalidatePath('/accounts');
         revalidatePath('/dashboard'); // Balance updates might reflect on dashboard
@@ -42,7 +61,7 @@ export async function createAccount(data: {
         return {
             success: true,
             account: {
-                _id: newAccount._id.toString(),
+                _id: newAccount.id,
                 name: newAccount.name,
                 type: newAccount.type,
                 balance: newAccount.balance,

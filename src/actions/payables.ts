@@ -1,12 +1,7 @@
 'use server';
 
-import mongoose from 'mongoose';
 import { revalidatePath } from 'next/cache';
-import connect from '@/lib/db';
-import Account from '@/models/Account';
-import Payable from '@/models/Payable';
-import Transaction from '@/models/Transaction';
-import Vendor from '@/models/Vendor';
+import { supabase } from '@/lib/supabase';
 
 type BusinessType = 'travel' | 'isp';
 
@@ -64,53 +59,63 @@ function revalidatePayableViews() {
 }
 
 export async function getPayables() {
-    await connect();
+    const { data: payables, error } = await supabase
+        .from('payables')
+        .select(`
+            *,
+            vendors:vendor_id (name)
+        `)
+        .order('due_date', { ascending: true });
 
-    const payables = await Payable.find({})
-        .sort({ dueDate: 1, createdAt: -1 })
-        .populate('vendorId', 'name');
+    if (error) {
+        console.error('Error fetching payables:', error);
+        return [];
+    }
 
-    return payables.map((item) => ({
-        _id: item._id.toString(),
-        date: item.date.toISOString(),
-        dueDate: item.dueDate ? item.dueDate.toISOString() : '',
+    return (payables || []).map((item) => ({
+        _id: item.id,
+        date: item.date,
+        dueDate: item.due_date || '',
         amount: item.amount,
-        paidAmount: item.paidAmount ?? 0,
-        remainingAmount: remainingAmount(item.amount, item.paidAmount ?? 0),
-        businessId: (item.businessId as BusinessType) ?? 'travel',
-        vendorId: item.vendorId?._id?.toString?.() ?? '',
-        vendorName: item.vendorId?.name ?? 'Unknown Vendor',
+        paidAmount: item.paid_amount || 0,
+        remainingAmount: remainingAmount(item.amount, item.paid_amount || 0),
+        businessId: (item.business_id as BusinessType) || 'travel',
+        vendorId: item.vendor_id || '',
+        vendorName: item.vendors?.name || 'Unknown Vendor',
         status: item.status,
-        description: item.description ?? '',
+        description: item.description || '',
     }));
 }
 
 export async function getPayableSettlementHistory(payableId: string) {
-    await connect();
+    const { data: payments, error } = await supabase
+        .from('transactions')
+        .select(`
+            *,
+            accounts:account_id (name)
+        `)
+        .eq('reference_id', payableId)
+        .eq('reference_model', 'Payable')
+        .eq('type', 'expense')
+        .eq('category', 'Payable Settlement')
+        .order('date', { ascending: false });
 
-    const payments = await Transaction.find({
-        referenceId: payableId,
-        referenceModel: 'Payable',
-        type: 'expense',
-        category: 'Payable Settlement',
-    })
-        .sort({ date: -1, createdAt: -1 })
-        .populate('accountId', 'name');
+    if (error) {
+        console.error('Error fetching payable settlement history:', error);
+        return [];
+    }
 
-    return payments.map((item) => ({
-        _id: item._id.toString(),
-        date: item.date.toISOString(),
+    return (payments || []).map((item) => ({
+        _id: item.id,
+        date: item.date,
         amount: item.amount,
-        accountName: item.accountId?.name ?? 'Unknown Account',
-        description: item.description ?? '',
+        accountName: item.accounts?.name || 'Unknown Account',
+        description: item.description || '',
     }));
 }
 
 export async function createPayable(data: PayableInput) {
-    const session = await mongoose.startSession();
     try {
-        await connect();
-
         const date = normalizeDate(data.date);
         if (!date) return { error: 'Valid payable date is required' };
 
@@ -127,49 +132,52 @@ export async function createPayable(data: PayableInput) {
         const vendorId = normalizeText(data.vendorId);
         if (!vendorId) return { error: 'Vendor is required' };
 
-        let actionError = '';
+        // Verify vendor exists
+        const { data: vendor } = await supabase
+            .from('vendors')
+            .select('*')
+            .eq('id', vendorId)
+            .single();
 
-        await session.withTransaction(async () => {
-            const vendor = await Vendor.findById(vendorId).session(session);
-            if (!vendor) {
-                actionError = 'Selected vendor does not exist';
-                await session.abortTransaction();
-                return;
-            }
+        if (!vendor) {
+            return { error: 'Selected vendor does not exist' };
+        }
 
-            await Payable.create([
-                {
-                    date,
-                    dueDate,
-                    amount,
-                    paidAmount: 0,
-                    vendorId,
-                    businessId: data.businessId,
-                    status: 'unpaid',
-                    description: normalizeText(data.description),
-                },
-            ], { session });
+        // Create payable
+        const { error: payableError } = await supabase
+            .from('payables')
+            .insert({
+                date: date.toISOString(),
+                due_date: dueDate.toISOString(),
+                amount,
+                paid_amount: 0,
+                vendor_id: vendorId,
+                business_id: data.businessId,
+                status: 'unpaid',
+                description: normalizeText(data.description) || null,
+            });
 
-            await Vendor.findByIdAndUpdate(vendorId, { $inc: { balance: amount } }, { session });
-        });
+        if (payableError) {
+            console.error('Create payable error:', payableError);
+            return { error: 'Failed to create payable' };
+        }
 
-        if (actionError) return { error: actionError };
+        // Update vendor balance
+        await supabase
+            .from('vendors')
+            .update({ balance: vendor.balance + amount })
+            .eq('id', vendorId);
 
         revalidatePayableViews();
         return { success: true };
     } catch (error) {
         console.error('Create payable error:', error);
         return { error: 'Failed to create payable' };
-    } finally {
-        await session.endSession();
     }
 }
 
 export async function updatePayable(id: string, data: PayableInput) {
-    const session = await mongoose.startSession();
     try {
-        await connect();
-
         const date = normalizeDate(data.date);
         if (!date) return { error: 'Valid payable date is required' };
 
@@ -196,138 +204,196 @@ export async function updatePayable(id: string, data: PayableInput) {
             return { error: 'Settlement account is required when recording payment' };
         }
 
-        let actionError = '';
+        // Fetch existing payable
+        const { data: payable } = await supabase
+            .from('payables')
+            .select('*')
+            .eq('id', id)
+            .single();
 
-        await session.withTransaction(async () => {
-            const payable = await Payable.findById(id).session(session);
-            if (!payable) {
-                actionError = 'Payable record not found';
-                await session.abortTransaction();
-                return;
+        if (!payable) {
+            return { error: 'Payable record not found' };
+        }
+
+        // Verify vendor exists
+        const { data: vendor } = await supabase
+            .from('vendors')
+            .select('*')
+            .eq('id', vendorId)
+            .single();
+
+        if (!vendor) {
+            return { error: 'Selected vendor does not exist' };
+        }
+
+        // Verify settlement account if payment is being made
+        if (paymentAmount > 0 && settlementAccountId) {
+            const { data: account } = await supabase
+                .from('accounts')
+                .select('*')
+                .eq('id', settlementAccountId)
+                .single();
+
+            if (!account) {
+                return { error: 'Selected settlement account does not exist' };
             }
 
-            const vendor = await Vendor.findById(vendorId).session(session);
-            if (!vendor) {
-                actionError = 'Selected vendor does not exist';
-                await session.abortTransaction();
-                return;
+            if ((account.balance || 0) < paymentAmount) {
+                return { error: 'Insufficient account balance for this settlement' };
+            }
+        }
+
+        const oldVendorId = payable.vendor_id;
+        const oldAmount = payable.amount;
+        const oldPaidAmount = payable.paid_amount || 0;
+        const oldRemaining = remainingAmount(oldAmount, oldPaidAmount);
+
+        const newPaidAmount = oldPaidAmount + paymentAmount;
+        if (newPaidAmount > amount) {
+            return { error: 'Payment amount cannot exceed remaining payable' };
+        }
+
+        const newRemaining = remainingAmount(amount, newPaidAmount);
+        const status = deriveStatus(amount, newPaidAmount);
+
+        // Handle vendor balance updates
+        if (oldVendorId === vendorId) {
+            const delta = newRemaining - oldRemaining;
+            if (delta !== 0) {
+                await supabase
+                    .from('vendors')
+                    .update({ balance: vendor.balance + delta })
+                    .eq('id', vendorId);
+            }
+        } else {
+            // Restore old vendor balance
+            const { data: oldVendor } = await supabase
+                .from('vendors')
+                .select('*')
+                .eq('id', oldVendorId)
+                .single();
+
+            if (oldVendor) {
+                await supabase
+                    .from('vendors')
+                    .update({ balance: oldVendor.balance - oldRemaining })
+                    .eq('id', oldVendorId);
             }
 
-            if (paymentAmount > 0 && settlementAccountId) {
-                const account = await Account.findById(settlementAccountId).session(session);
-                if (!account) {
-                    actionError = 'Selected settlement account does not exist';
-                    await session.abortTransaction();
-                    return;
-                }
-                if ((account.balance ?? 0) < paymentAmount) {
-                    actionError = 'Insufficient account balance for this settlement';
-                    await session.abortTransaction();
-                    return;
-                }
+            // Update new vendor balance
+            await supabase
+                .from('vendors')
+                .update({ balance: vendor.balance + newRemaining })
+                .eq('id', vendorId);
+        }
+
+        // Record payment transaction if applicable
+        if (paymentAmount > 0 && settlementAccountId) {
+            await supabase
+                .from('transactions')
+                .insert({
+                    date: date.toISOString(),
+                    amount: paymentAmount,
+                    type: 'expense',
+                    category: 'Payable Settlement',
+                    business_id: data.businessId,
+                    account_id: settlementAccountId,
+                    vendor_id: vendorId,
+                    description: `Settlement against payable #${id}`,
+                    reference_id: id,
+                    reference_model: 'Payable',
+                });
+
+            // Update account balance
+            const { data: account } = await supabase
+                .from('accounts')
+                .select('*')
+                .eq('id', settlementAccountId)
+                .single();
+
+            if (account) {
+                await supabase
+                    .from('accounts')
+                    .update({ balance: account.balance - paymentAmount })
+                    .eq('id', settlementAccountId);
             }
+        }
 
-            const oldVendorId = payable.vendorId.toString();
-            const oldAmount = payable.amount;
-            const oldPaidAmount = payable.paidAmount ?? 0;
-            const oldRemaining = remainingAmount(oldAmount, oldPaidAmount);
+        // Update payable
+        const { error } = await supabase
+            .from('payables')
+            .update({
+                date: date.toISOString(),
+                due_date: dueDate.toISOString(),
+                amount,
+                paid_amount: newPaidAmount,
+                status,
+                business_id: data.businessId,
+                vendor_id: vendorId,
+                description: normalizeText(data.description) || null,
+            })
+            .eq('id', id);
 
-            const newPaidAmount = oldPaidAmount + paymentAmount;
-            if (newPaidAmount > amount) {
-                actionError = 'Payment amount cannot exceed remaining payable';
-                await session.abortTransaction();
-                return;
-            }
-
-            const newRemaining = remainingAmount(amount, newPaidAmount);
-            const status = deriveStatus(amount, newPaidAmount);
-
-            if (oldVendorId === vendorId) {
-                const delta = newRemaining - oldRemaining;
-                if (delta !== 0) {
-                    await Vendor.findByIdAndUpdate(vendorId, { $inc: { balance: delta } }, { session });
-                }
-            } else {
-                await Vendor.findByIdAndUpdate(oldVendorId, { $inc: { balance: -oldRemaining } }, { session });
-                await Vendor.findByIdAndUpdate(vendorId, { $inc: { balance: newRemaining } }, { session });
-            }
-
-            if (paymentAmount > 0 && settlementAccountId) {
-                await Transaction.create([
-                    {
-                        date,
-                        amount: paymentAmount,
-                        type: 'expense',
-                        category: 'Payable Settlement',
-                        businessId: data.businessId,
-                        accountId: settlementAccountId,
-                        vendorId,
-                        description: `Settlement against payable #${id}`,
-                        referenceId: payable._id,
-                        referenceModel: 'Payable',
-                    },
-                ], { session });
-
-                await Account.findByIdAndUpdate(settlementAccountId, { $inc: { balance: -paymentAmount } }, { session });
-            }
-
-            payable.date = date;
-            payable.dueDate = dueDate;
-            payable.amount = amount;
-            payable.paidAmount = newPaidAmount;
-            payable.status = status;
-            payable.businessId = data.businessId;
-            payable.vendorId = vendorId;
-            payable.description = normalizeText(data.description);
-
-            await payable.save({ session });
-        });
-
-        if (actionError) return { error: actionError };
+        if (error) {
+            console.error('Update payable error:', error);
+            return { error: 'Failed to update payable' };
+        }
 
         revalidatePayableViews();
         return { success: true };
     } catch (error) {
         console.error('Update payable error:', error);
         return { error: 'Failed to update payable' };
-    } finally {
-        await session.endSession();
     }
 }
 
 export async function deletePayable(id: string) {
-    const session = await mongoose.startSession();
     try {
-        await connect();
+        // Fetch existing payable
+        const { data: payable } = await supabase
+            .from('payables')
+            .select('*')
+            .eq('id', id)
+            .single();
 
-        let actionError = '';
+        if (!payable) {
+            return { error: 'Payable record not found' };
+        }
 
-        await session.withTransaction(async () => {
-            const payable = await Payable.findById(id).session(session);
-            if (!payable) {
-                actionError = 'Payable record not found';
-                await session.abortTransaction();
-                return;
+        const vendorId = payable.vendor_id;
+        const outstanding = remainingAmount(payable.amount, payable.paid_amount || 0);
+
+        // Update vendor balance
+        if (outstanding !== 0) {
+            const { data: vendor } = await supabase
+                .from('vendors')
+                .select('*')
+                .eq('id', vendorId)
+                .single();
+
+            if (vendor) {
+                await supabase
+                    .from('vendors')
+                    .update({ balance: vendor.balance - outstanding })
+                    .eq('id', vendorId);
             }
+        }
 
-            const vendorId = payable.vendorId.toString();
-            const outstanding = remainingAmount(payable.amount, payable.paidAmount ?? 0);
+        // Delete payable
+        const { error } = await supabase
+            .from('payables')
+            .delete()
+            .eq('id', id);
 
-            if (outstanding !== 0) {
-                await Vendor.findByIdAndUpdate(vendorId, { $inc: { balance: -outstanding } }, { session });
-            }
-
-            await Payable.deleteOne({ _id: id }, { session });
-        });
-
-        if (actionError) return { error: actionError };
+        if (error) {
+            console.error('Delete payable error:', error);
+            return { error: 'Failed to delete payable' };
+        }
 
         revalidatePayableViews();
         return { success: true };
     } catch (error) {
         console.error('Delete payable error:', error);
         return { error: 'Failed to delete payable' };
-    } finally {
-        await session.endSession();
     }
 }

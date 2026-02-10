@@ -38,3 +38,7 @@ export async function updateSession() {
     // Refresh logic could go here
     // For now, simple valid check
 }
+
+export function getPasswordFingerprint(passwordHash: string) {
+    return passwordHash.slice(-16);
+}

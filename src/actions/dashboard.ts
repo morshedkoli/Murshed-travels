@@ -1,162 +1,175 @@
 'use server';
 
-import dbConnect from '@/lib/db';
-import Account from '@/models/Account';
-import Receivable from '@/models/Receivable';
-import Payable from '@/models/Payable';
-import Transaction from '@/models/Transaction';
-import Service from '@/models/Service';
-import Customer from '@/models/Customer';
-import Vendor from '@/models/Vendor';
+import { supabase } from '@/lib/supabase';
 import { unstable_noStore as noStore } from 'next/cache';
 
 export async function getDashboardStats() {
     noStore();
-    await dbConnect();
 
-    // 1. Total Balance (Sum of all accounts)
-    // Ensure models are registered (prevent tree-shaking)
-    void Customer;
-    void Vendor;
-    const accounts = await Account.find({});
-    const totalBalance = accounts.reduce((sum, acc) => sum + (acc.balance || 0), 0);
+    try {
+        // 1. Total Balance (Sum of all accounts)
+        const { data: accounts } = await supabase
+            .from('accounts')
+            .select('balance');
+        const totalBalance = (accounts || []).reduce((sum, acc) => sum + (acc.balance || 0), 0);
 
-    // 2. Total Receivable (Outstanding)
-    const receivables = await Receivable.aggregate([
-        { $match: { status: { $in: ['unpaid', 'partial'] } } },
-        {
-            $group: {
-                _id: null,
-                total: {
-                    $sum: {
-                        $max: [
-                            0,
-                            { $subtract: ['$amount', { $ifNull: ['$paidAmount', 0] }] },
-                        ],
-                    },
-                },
-                count: { $sum: 1 },
-            },
+        // 2. Total Receivable (Outstanding)
+        const { data: receivables } = await supabase
+            .from('receivables')
+            .select('*')
+            .in('status', ['unpaid', 'partial']);
+        
+        let totalReceivable = 0;
+        let openReceivableCount = 0;
+        for (const rec of (receivables || [])) {
+            const remaining = Math.max(0, rec.amount - (rec.paid_amount || 0));
+            totalReceivable += remaining;
+            openReceivableCount++;
         }
-    ]);
-    const totalReceivable = receivables[0]?.total || 0;
-    const openReceivableCount = receivables[0]?.count || 0;
 
-    // 3. Total Payable (Outstanding)
-    const payables = await Payable.aggregate([
-        { $match: { status: { $in: ['unpaid', 'partial'] } } },
-        {
-            $group: {
-                _id: null,
-                total: {
-                    $sum: {
-                        $max: [
-                            0,
-                            { $subtract: ['$amount', { $ifNull: ['$paidAmount', 0] }] },
-                        ],
-                    },
-                },
-                count: { $sum: 1 },
-            },
+        // 3. Total Payable (Outstanding)
+        const { data: payables } = await supabase
+            .from('payables')
+            .select('*')
+            .in('status', ['unpaid', 'partial']);
+        
+        let totalPayable = 0;
+        let openPayableCount = 0;
+        for (const pay of (payables || [])) {
+            const remaining = Math.max(0, pay.amount - (pay.paid_amount || 0));
+            totalPayable += remaining;
+            openPayableCount++;
         }
-    ]);
-    const totalPayable = payables[0]?.total || 0;
-    const openPayableCount = payables[0]?.count || 0;
 
-    // 4. Monthly Profit/Loss (This Month)
-    const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-    const income = await Transaction.aggregate([
-        { $match: { date: { $gte: startOfMonth }, type: 'income' } },
-        { $group: { _id: null, total: { $sum: '$amount' } } }
-    ]);
-    const expense = await Transaction.aggregate([
-        { $match: { date: { $gte: startOfMonth }, type: 'expense' } },
-        { $group: { _id: null, total: { $sum: '$amount' } } }
-    ]);
+        // 4. Monthly Profit/Loss (This Month)
+        const startOfMonth = new Date();
+        startOfMonth.setDate(1);
+        startOfMonth.setHours(0, 0, 0, 0);
 
-    const monthlyIncome = income[0]?.total || 0;
-    const monthlyExpense = expense[0]?.total || 0;
-    const netProfit = monthlyIncome - monthlyExpense;
+        const { data: incomeTransactions } = await supabase
+            .from('transactions')
+            .select('amount')
+            .eq('type', 'income')
+            .gte('date', startOfMonth.toISOString());
+        
+        const monthlyIncome = (incomeTransactions || []).reduce((sum, t) => sum + (t.amount || 0), 0);
 
-    // 6. Service Stats
-    const totalServices = await Service.countDocuments();
-    const deliveredServices = await Service.countDocuments({ status: 'delivered' });
-    const pendingServices = await Service.countDocuments({ status: { $in: ['pending', 'in-progress'] } });
+        const { data: expenseTransactions } = await supabase
+            .from('transactions')
+            .select('amount')
+            .eq('type', 'expense')
+            .gte('date', startOfMonth.toISOString());
+        
+        const monthlyExpense = (expenseTransactions || []).reduce((sum, t) => sum + (t.amount || 0), 0);
+        const netProfit = monthlyIncome - monthlyExpense;
 
-    const serviceRevenueAgg = await Service.aggregate([
-        { $match: { status: 'delivered' } },
-        { $group: { _id: null, total: { $sum: '$price' } } }
-    ]);
-    const serviceRevenue = serviceRevenueAgg[0]?.total || 0;
+        // 6. Service Stats
+        const { count: totalServices } = await supabase
+            .from('services')
+            .select('*', { count: 'exact', head: true });
+        
+        const { count: deliveredServices } = await supabase
+            .from('services')
+            .select('*', { count: 'exact', head: true })
+            .eq('status', 'delivered');
+        
+        const { count: pendingServices } = await supabase
+            .from('services')
+            .select('*', { count: 'exact', head: true })
+            .in('status', ['pending', 'in-progress']);
 
-    const unsettledVendorCostAgg = await Service.aggregate([
-        {
-            $match: {
-                status: 'delivered',
-                cost: { $gt: 0 },
-                $or: [{ expenseRecorded: false }, { expenseRecorded: { $exists: false } }],
-            },
-        },
-        {
-            $group: {
-                _id: null,
-                total: { $sum: '$cost' },
-                count: { $sum: 1 },
-            },
-        },
-    ]);
-    const unsettledVendorCost = unsettledVendorCostAgg[0]?.total || 0;
-    const unsettledVendorCostCount = unsettledVendorCostAgg[0]?.count || 0;
+        // Service Revenue
+        const { data: deliveredServicesData } = await supabase
+            .from('services')
+            .select('price')
+            .eq('status', 'delivered');
+        const serviceRevenue = (deliveredServicesData || []).reduce((sum, s) => sum + (s.price || 0), 0);
 
-    const recentDeliveredServices = await Service.find({ status: 'delivered' })
-        .sort({ deliveryDate: -1, createdAt: -1 })
-        .limit(10)
-        .populate('customerId', 'name')
-        .populate('vendorId', 'name')
-        .populate('receivableId', 'amount paidAmount')
-        .populate('payableId', 'amount paidAmount');
+        // Unsettled Vendor Cost
+        const { data: unsettledServices } = await supabase
+            .from('services')
+            .select('*')
+            .eq('status', 'delivered')
+            .gt('cost', 0)
+            .eq('expense_recorded', false);
+        
+        const unsettledVendorCost = (unsettledServices || []).reduce((sum, s) => sum + (s.cost || 0), 0);
+        const unsettledVendorCostCount = unsettledServices?.length || 0;
 
-    const agentLedger = recentDeliveredServices.map((row) => {
-        const receivableAmount = row.receivableId?.amount ?? row.price;
-        const receivablePaid = row.receivableId?.paidAmount ?? 0;
-        const payableAmount = row.payableId?.amount ?? row.cost ?? 0;
-        const payablePaid = row.payableId?.paidAmount ?? 0;
+        // Recent delivered services for agent ledger
+        const { data: recentDelivered } = await supabase
+            .from('services')
+            .select(`
+                *,
+                customers:customer_id (name),
+                vendors:vendor_id (name),
+                receivables:receivable_id (amount, paid_amount),
+                payables:payable_id (amount, paid_amount)
+            `)
+            .eq('status', 'delivered')
+            .order('delivery_date', { ascending: false })
+            .limit(10);
+
+        const agentLedger = (recentDelivered || []).map((row) => {
+            const receivableAmount = row.receivables?.amount || row.price;
+            const receivablePaid = row.receivables?.paid_amount || 0;
+            const payableAmount = row.payables?.amount || row.cost || 0;
+            const payablePaid = row.payables?.paid_amount || 0;
+
+            return {
+                _id: row.id,
+                date: row.delivery_date || row.created_at,
+                serviceName: row.name,
+                customerName: row.customers?.name || 'Unknown',
+                vendorName: row.vendors?.name || 'Unknown',
+                customerAmount: row.price,
+                customerDue: Math.max(0, receivableAmount - receivablePaid),
+                vendorAmount: row.cost || 0,
+                vendorDue: Math.max(0, payableAmount - payablePaid),
+                profit: row.profit || row.price - (row.cost || 0),
+            };
+        });
 
         return {
-            _id: row._id.toString(),
-            date: (row.deliveryDate ?? row.createdAt).toISOString(),
-            serviceName: row.name,
-            customerName: row.customerId?.name ?? 'Unknown',
-            vendorName: row.vendorId?.name ?? 'Unknown',
-            customerAmount: row.price,
-            customerDue: Math.max(0, receivableAmount - receivablePaid),
-            vendorAmount: row.cost ?? 0,
-            vendorDue: Math.max(0, payableAmount - payablePaid),
-            profit: row.profit ?? row.price - (row.cost ?? 0),
+            totalBalance,
+            totalReceivable,
+            totalPayable,
+            monthlyIncome,
+            monthlyExpense,
+            netProfit,
+            totalServices: totalServices || 0,
+            deliveredServices: deliveredServices || 0,
+            pendingServices: pendingServices || 0,
+            serviceRevenue,
+            openReceivableCount,
+            openPayableCount,
+            unsettledVendorCost,
+            unsettledVendorCostCount,
+            agentLedger,
         };
-    });
-
-    return {
-        totalBalance,
-        totalReceivable,
-        totalPayable,
-        monthlyIncome,
-        monthlyExpense,
-        netProfit,
-        totalServices,
-        deliveredServices,
-        pendingServices,
-        serviceRevenue,
-        openReceivableCount,
-        openPayableCount,
-        unsettledVendorCost,
-        unsettledVendorCostCount,
-        agentLedger,
-    };
+    } catch (error) {
+        console.error('Dashboard stats error:', error);
+        return {
+            totalBalance: 0,
+            totalReceivable: 0,
+            totalPayable: 0,
+            monthlyIncome: 0,
+            monthlyExpense: 0,
+            netProfit: 0,
+            totalServices: 0,
+            deliveredServices: 0,
+            pendingServices: 0,
+            serviceRevenue: 0,
+            openReceivableCount: 0,
+            openPayableCount: 0,
+            unsettledVendorCost: 0,
+            unsettledVendorCostCount: 0,
+            agentLedger: [],
+        };
+    }
 }
 
 export async function getChartData() {
-    await dbConnect();
     // Mock data for initial UI if no transactions, else aggregation
     // For now return empty or simple structure
     return [

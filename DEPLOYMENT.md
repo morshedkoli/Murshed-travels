@@ -1,157 +1,88 @@
 # Murshed Travels - Deployment Guide
 
-## Vercel Deployment Instructions
+## Vercel Deployment Instructions (Supabase)
 
 ### 1. Prerequisites
-- Vercel account (sign up at https://vercel.com)
-- MongoDB Atlas account (or any MongoDB provider)
+- Vercel account (https://vercel.com)
+- Supabase project (https://supabase.com)
 - GitHub/GitLab/Bitbucket repository
 
 ### 2. Environment Variables Setup
 
-Add the following environment variables in your Vercel project settings:
+Add these variables in Vercel Project Settings -> Environment Variables:
 
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `MONGODB_URI` | MongoDB connection string (use one URI only) | `mongodb://username:password@cluster-shard-00-00.mongodb.net:27017,cluster-shard-00-01.mongodb.net:27017,cluster-shard-00-02.mongodb.net:27017/bizledger?ssl=true&authSource=admin&retryWrites=true&w=majority` |
-| `JWT_SECRET` | Secret key for JWT tokens | Generate a random string (32+ characters) |
+| Variable | Description |
+|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon/public API key |
+| `JWT_SECRET` | Secret key for app JWT session |
 
-#### Generate JWT Secret:
+Generate JWT secret:
+
 ```bash
-# Run this in terminal to generate a secure JWT secret
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
-### 3. MongoDB Atlas Setup (if not done)
+### 3. Supabase Setup
 
-1. Create a MongoDB Atlas account
-2. Create a new cluster
-3. Create a database user
-4. Whitelist your IP or allow access from anywhere (0.0.0.0/0) for Vercel
-5. Get the connection string and replace password
+1. Create a new Supabase project.
+2. Open SQL Editor.
+3. Run `supabase/schema.sql` from this repository.
+4. Copy URL and anon key from Supabase -> Settings -> API.
 
 ### 4. Deployment Steps
 
-Important: In Vercel, define only one database variable: `MONGODB_URI`.
-Do not add alternate names like `MONGO_URI`, `MONGODB_URL`, or multiple URI variants.
-
 #### Option A: Deploy via Vercel Dashboard
 
-1. Push your code to GitHub/GitLab/Bitbucket
-2. Go to https://vercel.com/dashboard
-3. Click "New Project"
-4. Import your repository
-5. Configure:
-   - Framework Preset: Next.js
-   - Root Directory: ./ (default)
-   - Build Command: `npm run build` (default)
-   - Output Directory: .next (default)
-6. Add Environment Variables (from step 2)
-7. Click "Deploy"
+1. Push code to your git provider.
+2. Open https://vercel.com/dashboard.
+3. Click "New Project" and import repository.
+4. Confirm Next.js settings.
+5. Add environment variables from step 2.
+6. Deploy.
 
 #### Option B: Deploy via Vercel CLI
 
 ```bash
-# Install Vercel CLI
 npm i -g vercel
-
-# Login to Vercel
 vercel login
-
-# Deploy
 vercel
-
-# For production deployment
 vercel --prod
 ```
 
 ### 5. Post-Deployment Setup
 
-#### Create Admin User
+Create initial admin and default accounts:
 
-After first deployment, you need to create an admin user in MongoDB:
-
-```javascript
-// Connect to MongoDB and run:
-db.users.insertOne({
-  email: "admin@murshedtravels.com",
-  password: "$2a$10$YourHashedPasswordHere", // bcrypt hashed
-  role: "admin",
-  createdAt: new Date()
-})
-```
-
-Or use the seed script locally:
 ```bash
 npm run seed
 ```
 
+Default admin credentials:
+- Email: `admin@bizledger.local`
+- Password: `admin`
+
 ### 6. Build Verification
 
-To verify the build works locally before deploying:
-
 ```bash
-# Install dependencies
 npm install
-
-# Build the project
 npm run build
-
-# Check for errors
-# If successful, the .next folder will be created
 ```
 
-### 7. Common Issues & Solutions
+### 7. Common Issues
 
-#### Issue: MongoDB connection timeout
-**Solution**: Whitelist Vercel IPs or use 0.0.0.0/0 in MongoDB Atlas Network Access
+- Missing Supabase variables: ensure `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` are set.
+- Login/session issues: verify `JWT_SECRET` is present and at least 32 characters.
+- Build failures: run `npm run lint` and fix TypeScript/ESLint issues.
 
-#### Issue: JWT errors
-**Solution**: Ensure JWT_SECRET is set and is at least 32 characters long
-
-#### Issue: Build fails
-**Solution**: 
-- Check all imports are correct
-- Ensure no syntax errors
-- Run `npm run lint` to check for issues
-
-### 8. Performance Optimization
-
-The app is already optimized with:
-- Next.js 16 with Turbopack
-- Server-side rendering for dynamic pages
-- Static generation where possible
-- Optimized images and fonts
-
-### 9. Monitoring
-
-After deployment:
-1. Check Vercel Analytics for performance metrics
-2. Monitor MongoDB Atlas for database performance
-3. Set up Vercel Alerts for build failures
-
-### 10. Custom Domain (Optional)
-
-1. Go to Vercel Dashboard → Project Settings → Domains
-2. Add your custom domain (e.g., murshedtravels.com)
-3. Follow DNS configuration instructions
-
-## Environment Variables Template
-
-Create a `.env.local` file locally (DO NOT commit this):
+### 8. Local `.env.local` Template
 
 ```env
-MONGODB_URI=mongodb://username:password@cluster-shard-00-00.mongodb.net:27017,cluster-shard-00-01.mongodb.net:27017,cluster-shard-00-02.mongodb.net:27017/bizledger?ssl=true&authSource=admin&retryWrites=true&w=majority
+NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
 JWT_SECRET=your-super-secret-jwt-key-min-32-chars
 ```
 
-## Support
-
-For issues:
-1. Check Vercel deployment logs
-2. Check MongoDB Atlas logs
-3. Review application error logs in Vercel
-
 ---
 
-**Note**: Never commit `.env.local` or any sensitive credentials to git!
+Never commit `.env.local` or secrets to git.

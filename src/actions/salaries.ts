@@ -1,11 +1,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import connect from '@/lib/db';
-import Account from '@/models/Account';
-import Employee from '@/models/Employee';
-import Salary from '@/models/Salary';
-import Transaction from '@/models/Transaction';
+import { supabase } from '@/lib/supabase';
 
 type SalaryBusiness = 'travel' | 'isp';
 
@@ -46,41 +42,55 @@ function revalidateSalaryViews() {
 }
 
 export async function getSalaryRecords(filters?: { month?: string; year?: number; businessId?: SalaryBusiness }) {
-    await connect();
+    let query = supabase
+        .from('salaries')
+        .select(`
+            *,
+            employees:employee_id (name, role, base_salary, active)
+        `);
 
-    const query: Record<string, unknown> = {};
-
-    if (filters?.month && isValidMonth(filters.month)) query.month = filters.month;
-    if (filters?.year) query.year = filters.year;
-    if (filters?.businessId === 'travel') {
-        query.$or = [{ businessId: 'travel' }, { businessId: { $exists: false } }, { businessId: null }];
-    } else if (filters?.businessId === 'isp') {
-        query.businessId = 'isp';
+    if (filters?.month && isValidMonth(filters.month)) {
+        query = query.eq('month', filters.month);
+    }
+    
+    if (filters?.year) {
+        query = query.eq('year', filters.year);
     }
 
-    const records = await Salary.find(query)
-        .sort({ year: -1, month: -1, createdAt: -1 })
-        .populate('employeeId', 'name role baseSalary active');
+    if (filters?.businessId) {
+        if (filters.businessId === 'travel') {
+            query = query.or('business_id.eq.travel,business_id.is.null');
+        } else {
+            query = query.eq('business_id', filters.businessId);
+        }
+    }
 
-    return records.map((record) => ({
-        _id: record._id.toString(),
-        employeeId: record.employeeId?._id?.toString?.() ?? '',
-        employeeName: record.employeeId?.name ?? 'Unknown Employee',
-        employeeRole: record.employeeId?.role ?? '-',
+    const { data: records, error } = await query
+        .order('year', { ascending: false })
+        .order('month', { ascending: false });
+
+    if (error) {
+        console.error('Error fetching salary records:', error);
+        return [];
+    }
+
+    return (records || []).map((record) => ({
+        _id: record.id,
+        employeeId: record.employee_id || '',
+        employeeName: record.employees?.name || 'Unknown Employee',
+        employeeRole: record.employees?.role || '-',
         amount: record.amount,
         month: record.month,
         year: record.year,
         status: record.status as 'unpaid' | 'paid',
-        businessId: (record.businessId as SalaryBusiness) ?? 'travel',
-        paidDate: record.paidDate ? record.paidDate.toISOString() : '',
-        createdAt: record.createdAt.toISOString(),
+        businessId: (record.business_id as SalaryBusiness) || 'travel',
+        paidDate: record.paid_date || '',
+        createdAt: record.created_at,
     }));
 }
 
 export async function generateMonthlySalaries(input: GenerateInput) {
     try {
-        await connect();
-
         const month = normalizeText(input.month);
         if (!month || !isValidMonth(month)) {
             return { error: 'Month must be in YYYY-MM format' };
@@ -96,36 +106,50 @@ export async function generateMonthlySalaries(input: GenerateInput) {
         let createdCount = 0;
         let updatedCount = 0;
 
-        const employeeQuery = businessId === 'travel'
-            ? { active: true, $or: [{ businessId: 'travel' }, { businessId: { $exists: false } }, { businessId: null }] }
-            : { active: true, businessId: 'isp' };
+        // Fetch active employees
+        let employeeQuery = supabase
+            .from('employees')
+            .select('*')
+            .eq('active', true);
 
-        const employees = await Employee.find(employeeQuery);
+        if (businessId === 'travel') {
+            employeeQuery = employeeQuery.or('business_id.eq.travel,business_id.is.null');
+        } else {
+            employeeQuery = employeeQuery.eq('business_id', businessId);
+        }
 
-        for (const employee of employees) {
-            const existing = await Salary.findOne({
-                employeeId: employee._id,
-                month,
-                year,
-                businessId,
-            });
+        const { data: employees } = await employeeQuery;
+
+        for (const employee of (employees || [])) {
+            // Check if salary record exists
+            const { data: existing } = await supabase
+                .from('salaries')
+                .select('*')
+                .eq('employee_id', employee.id)
+                .eq('month', month)
+                .eq('year', year)
+                .eq('business_id', businessId)
+                .single();
 
             if (!existing) {
-                await Salary.create({
-                    employeeId: employee._id,
-                    amount: employee.baseSalary,
-                    month,
-                    year,
-                    status: 'unpaid',
-                    businessId,
-                });
+                // Create new salary record
+                await supabase
+                    .from('salaries')
+                    .insert({
+                        employee_id: employee.id,
+                        amount: employee.base_salary,
+                        month,
+                        year,
+                        status: 'unpaid',
+                        business_id: businessId,
+                    });
                 createdCount += 1;
-                continue;
-            }
-
-            if (existing.status === 'unpaid' && existing.amount !== employee.baseSalary) {
-                existing.amount = employee.baseSalary;
-                await existing.save();
+            } else if (existing.status === 'unpaid' && existing.amount !== employee.base_salary) {
+                // Update unpaid record with new salary
+                await supabase
+                    .from('salaries')
+                    .update({ amount: employee.base_salary })
+                    .eq('id', existing.id);
                 updatedCount += 1;
             }
         }
@@ -140,15 +164,22 @@ export async function generateMonthlySalaries(input: GenerateInput) {
 
 export async function paySalary(input: PaySalaryInput) {
     try {
-        await connect();
-
         const accountId = normalizeText(input.accountId);
         if (!accountId) return { error: 'Account is required' };
 
         const paidDate = normalizePaidDate(input.paidDate);
         if (!paidDate) return { error: 'Paid date is invalid' };
 
-        const salary = await Salary.findById(input.salaryId);
+        // Fetch salary record
+        const { data: salary } = await supabase
+            .from('salaries')
+            .select(`
+                *,
+                employees:employee_id (name)
+            `)
+            .eq('id', input.salaryId)
+            .single();
+
         if (!salary) {
             return { error: 'Salary record not found' };
         }
@@ -157,37 +188,50 @@ export async function paySalary(input: PaySalaryInput) {
             return { error: 'This salary is already paid' };
         }
 
-        const account = await Account.findById(accountId);
+        // Verify account exists and has sufficient balance
+        const { data: account } = await supabase
+            .from('accounts')
+            .select('*')
+            .eq('id', accountId)
+            .single();
+
         if (!account) {
             return { error: 'Selected account does not exist' };
         }
 
-        if ((account.balance ?? 0) < salary.amount) {
+        if ((account.balance || 0) < salary.amount) {
             return { error: 'Insufficient account balance for salary payment' };
         }
 
-        const employee = await Employee.findById(salary.employeeId);
-
         // Update salary status
-        salary.status = 'paid';
-        salary.paidDate = paidDate;
-        await salary.save();
+        await supabase
+            .from('salaries')
+            .update({
+                status: 'paid',
+                paid_date: paidDate.toISOString(),
+            })
+            .eq('id', input.salaryId);
 
         // Create expense transaction
-        await Transaction.create({
-            date: paidDate,
-            amount: salary.amount,
-            type: 'expense',
-            category: 'Salary',
-            businessId: salary.businessId ?? 'travel',
-            accountId,
-            description: `Salary payment for ${employee?.name ?? 'employee'} (${salary.month})`,
-            referenceId: salary._id,
-            referenceModel: 'Salary',
-        });
+        await supabase
+            .from('transactions')
+            .insert({
+                date: paidDate.toISOString(),
+                amount: salary.amount,
+                type: 'expense',
+                category: 'Salary',
+                business_id: salary.business_id || 'travel',
+                account_id: accountId,
+                description: `Salary payment for ${salary.employees?.name || 'employee'} (${salary.month})`,
+                reference_id: input.salaryId,
+                reference_model: 'Salary',
+            });
 
         // Update account balance
-        await Account.findByIdAndUpdate(accountId, { $inc: { balance: -salary.amount } });
+        await supabase
+            .from('accounts')
+            .update({ balance: account.balance - salary.amount })
+            .eq('id', accountId);
 
         revalidateSalaryViews();
         return { success: true };

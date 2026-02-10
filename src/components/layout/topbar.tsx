@@ -1,6 +1,7 @@
 'use client';
 
 import { Bell, Menu, Search, User } from 'lucide-react';
+import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { ThemeToggle } from '@/components/layout/theme-toggle';
@@ -22,6 +23,7 @@ const pageTitles: Record<string, string> = {
     'employees': 'Employees',
     'salary': 'Salary',
     'reports': 'Reports',
+    'profile': 'Profile',
     'advance-payments': 'Advance Payments',
 };
 
@@ -75,13 +77,13 @@ export function Topbar({ onMenuClick }: TopbarProps) {
                 <ThemeToggle />
 
                 {/* User */}
-                <Button 
-                    variant="ghost" 
-                    size="icon"
-                    className="h-8 w-8 text-muted-foreground"
+                <Link
+                    href="/profile"
+                    aria-label="Open profile settings"
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                 >
                     <User className="h-4 w-4" />
-                </Button>
+                </Link>
             </div>
         </header>
     );

@@ -1,8 +1,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import connect from '@/lib/db';
-import Employee from '@/models/Employee';
+import { supabase } from '@/lib/supabase';
 
 type BusinessType = 'travel' | 'isp';
 
@@ -35,25 +34,30 @@ function revalidateEmployeeViews() {
 }
 
 export async function getEmployees() {
-    await connect();
-    const employees = await Employee.find({}).sort({ createdAt: -1 });
+    const { data: employees, error } = await supabase
+        .from('employees')
+        .select('*')
+        .order('created_at', { ascending: false });
 
-    return employees.map((employee) => ({
-        _id: employee._id.toString(),
+    if (error) {
+        console.error('Error fetching employees:', error);
+        return [];
+    }
+
+    return (employees || []).map((employee) => ({
+        _id: employee.id,
         name: employee.name,
         role: employee.role,
         phone: employee.phone,
-        baseSalary: employee.baseSalary,
+        baseSalary: employee.base_salary,
         active: employee.active,
-        businessId: (employee.businessId as BusinessType) ?? 'travel',
-        createdAt: employee.createdAt.toISOString(),
+        businessId: (employee.business_id as BusinessType) || 'travel',
+        createdAt: employee.created_at,
     }));
 }
 
 export async function createEmployee(data: EmployeeInput) {
     try {
-        await connect();
-
         const name = normalizeText(data.name);
         if (!name) return { error: 'Employee name is required' };
 
@@ -70,14 +74,21 @@ export async function createEmployee(data: EmployeeInput) {
             return { error: 'Business must be travel or isp' };
         }
 
-        await Employee.create({
-            name,
-            role,
-            phone,
-            baseSalary,
-            businessId: data.businessId,
-            active: data.active ?? true,
-        });
+        const { error } = await supabase
+            .from('employees')
+            .insert({
+                name,
+                role,
+                phone,
+                base_salary: baseSalary,
+                business_id: data.businessId,
+                active: data.active ?? true,
+            });
+
+        if (error) {
+            console.error('Create employee error:', error);
+            return { error: 'Failed to create employee' };
+        }
 
         revalidateEmployeeViews();
         return { success: true };
@@ -89,9 +100,13 @@ export async function createEmployee(data: EmployeeInput) {
 
 export async function updateEmployee(id: string, data: EmployeeInput) {
     try {
-        await connect();
+        // Check if employee exists
+        const { data: employee } = await supabase
+            .from('employees')
+            .select('*')
+            .eq('id', id)
+            .single();
 
-        const employee = await Employee.findById(id);
         if (!employee) return { error: 'Employee record not found' };
 
         const name = normalizeText(data.name);
@@ -110,14 +125,22 @@ export async function updateEmployee(id: string, data: EmployeeInput) {
             return { error: 'Business must be travel or isp' };
         }
 
-        employee.name = name;
-        employee.role = role;
-        employee.phone = phone;
-        employee.baseSalary = baseSalary;
-        employee.businessId = data.businessId;
-        employee.active = data.active ?? true;
+        const { error } = await supabase
+            .from('employees')
+            .update({
+                name,
+                role,
+                phone,
+                base_salary: baseSalary,
+                business_id: data.businessId,
+                active: data.active ?? true,
+            })
+            .eq('id', id);
 
-        await employee.save();
+        if (error) {
+            console.error('Update employee error:', error);
+            return { error: 'Failed to update employee' };
+        }
 
         revalidateEmployeeViews();
         return { success: true };
@@ -129,12 +152,24 @@ export async function updateEmployee(id: string, data: EmployeeInput) {
 
 export async function deleteEmployee(id: string) {
     try {
-        await connect();
+        // Check if employee exists
+        const { data: employee } = await supabase
+            .from('employees')
+            .select('*')
+            .eq('id', id)
+            .single();
 
-        const employee = await Employee.findById(id);
         if (!employee) return { error: 'Employee record not found' };
 
-        await Employee.deleteOne({ _id: id });
+        const { error } = await supabase
+            .from('employees')
+            .delete()
+            .eq('id', id);
+
+        if (error) {
+            console.error('Delete employee error:', error);
+            return { error: 'Failed to delete employee' };
+        }
 
         revalidateEmployeeViews();
         return { success: true };

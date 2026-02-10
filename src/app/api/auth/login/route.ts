@@ -1,8 +1,7 @@
 import { NextResponse } from 'next/server';
-import dbConnect from '@/lib/db';
-import User from '@/models/User';
+import { supabase } from '@/lib/supabase';
 import bcrypt from 'bcryptjs';
-import { encrypt } from '@/lib/auth';
+import { encrypt, getPasswordFingerprint } from '@/lib/auth';
 import { cookies } from 'next/headers';
 
 export async function POST(request: Request) {
@@ -10,10 +9,14 @@ export async function POST(request: Request) {
         const body = await request.json();
         const { email, password } = body;
 
-        await dbConnect();
-        const user = await User.findOne({ email });
+        // Fetch user from Supabase
+        const { data: user, error } = await supabase
+            .from('users')
+            .select('*')
+            .eq('email', email)
+            .single();
 
-        if (!user) {
+        if (error || !user) {
             return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 });
         }
 
@@ -23,7 +26,12 @@ export async function POST(request: Request) {
         }
 
         // Create session
-        const session = await encrypt({ id: user._id, email: user.email, role: user.role });
+        const session = await encrypt({
+            id: user.id,
+            email: user.email,
+            role: user.role,
+            pwdv: getPasswordFingerprint(user.password),
+        });
         const cookieStore = await cookies();
         cookieStore.set('session', session, {
             httpOnly: true,
@@ -35,6 +43,10 @@ export async function POST(request: Request) {
         return NextResponse.json({ success: true });
     } catch (error) {
         console.error('Login error:', error);
-        return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        return NextResponse.json({ 
+            error: 'Internal server error', 
+            details: process.env.NODE_ENV === 'development' ? errorMessage : undefined 
+        }, { status: 500 });
     }
 }

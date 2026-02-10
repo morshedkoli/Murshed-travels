@@ -1,10 +1,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import connect from '@/lib/db';
-import Account from '@/models/Account';
-import Transaction from '@/models/Transaction';
-import Vendor from '@/models/Vendor';
+import { supabase } from '@/lib/supabase';
 
 type ExpenseInput = {
     date: string;
@@ -39,31 +36,37 @@ function revalidateExpenseViews() {
 }
 
 export async function getExpenseEntries() {
-    await connect();
+    const { data: expenses, error } = await supabase
+        .from('transactions')
+        .select(`
+            *,
+            accounts:account_id (name),
+            vendors:vendor_id (name)
+        `)
+        .eq('type', 'expense')
+        .order('date', { ascending: false });
 
-    const expenses = await Transaction.find({ type: 'expense' })
-        .sort({ date: -1, createdAt: -1 })
-        .populate('accountId', 'name')
-        .populate({ path: 'vendorId', select: 'name', strictPopulate: false });
+    if (error) {
+        console.error('Error fetching expense entries:', error);
+        return [];
+    }
 
-    return expenses.map((expense) => ({
-        _id: expense._id.toString(),
-        date: expense.date.toISOString(),
+    return (expenses || []).map((expense) => ({
+        _id: expense.id,
+        date: expense.date,
         amount: expense.amount,
         category: expense.category,
-        businessId: expense.businessId ?? 'travel',
-        accountId: expense.accountId?._id?.toString?.() ?? '',
-        accountName: expense.accountId?.name ?? 'Unknown Account',
-        vendorId: expense.vendorId?._id?.toString?.() ?? '',
-        vendorName: expense.vendorId?.name ?? '',
-        description: expense.description ?? '',
+        businessId: expense.business_id || 'travel',
+        accountId: expense.account_id || '',
+        accountName: expense.accounts?.name || 'Unknown Account',
+        vendorId: expense.vendor_id || '',
+        vendorName: expense.vendors?.name || '',
+        description: expense.description || '',
     }));
 }
 
 export async function createExpense(data: ExpenseInput) {
     try {
-        await connect();
-
         const date = normalizeDate(data.date);
         if (!date) return { error: 'Valid date is required' };
 
@@ -78,30 +81,54 @@ export async function createExpense(data: ExpenseInput) {
 
         const vendorId = normalizeText(data.vendorId);
 
-        const account = await Account.findById(accountId);
+        // Verify account exists
+        const { data: account } = await supabase
+            .from('accounts')
+            .select('*')
+            .eq('id', accountId)
+            .single();
+
         if (!account) {
             return { error: 'Selected account does not exist' };
         }
 
+        // Verify vendor if provided
         if (vendorId) {
-            const vendor = await Vendor.findById(vendorId);
+            const { data: vendor } = await supabase
+                .from('vendors')
+                .select('id')
+                .eq('id', vendorId)
+                .single();
+
             if (!vendor) {
                 return { error: 'Selected vendor does not exist' };
             }
         }
 
-        await Transaction.create({
-            date,
-            amount,
-            type: 'expense',
-            category,
-            businessId: data.businessId,
-            accountId,
-            vendorId,
-            description: normalizeText(data.description),
-        });
+        // Create transaction
+        const { error: transactionError } = await supabase
+            .from('transactions')
+            .insert({
+                date: date.toISOString(),
+                amount,
+                type: 'expense',
+                category,
+                business_id: data.businessId,
+                account_id: accountId,
+                vendor_id: vendorId || null,
+                description: normalizeText(data.description) || null,
+            });
 
-        await Account.findByIdAndUpdate(accountId, { $inc: { balance: -amount } });
+        if (transactionError) {
+            console.error('Create transaction error:', transactionError);
+            return { error: 'Failed to create expense record' };
+        }
+
+        // Update account balance
+        await supabase
+            .from('accounts')
+            .update({ balance: account.balance - amount })
+            .eq('id', accountId);
 
         revalidateExpenseViews();
         return { success: true };
@@ -113,8 +140,6 @@ export async function createExpense(data: ExpenseInput) {
 
 export async function updateExpense(id: string, data: ExpenseInput) {
     try {
-        await connect();
-
         const date = normalizeDate(data.date);
         if (!date) return { error: 'Valid date is required' };
 
@@ -129,45 +154,94 @@ export async function updateExpense(id: string, data: ExpenseInput) {
 
         const vendorId = normalizeText(data.vendorId);
 
-        const expense = await Transaction.findOne({ _id: id, type: 'expense' });
+        // Fetch existing expense
+        const { data: expense } = await supabase
+            .from('transactions')
+            .select('*')
+            .eq('id', id)
+            .eq('type', 'expense')
+            .single();
+
         if (!expense) {
             return { error: 'Expense record not found' };
         }
 
-        const account = await Account.findById(accountId);
+        // Verify account exists
+        const { data: account } = await supabase
+            .from('accounts')
+            .select('*')
+            .eq('id', accountId)
+            .single();
+
         if (!account) {
             return { error: 'Selected account does not exist' };
         }
 
+        // Verify vendor if provided
         if (vendorId) {
-            const vendor = await Vendor.findById(vendorId);
+            const { data: vendor } = await supabase
+                .from('vendors')
+                .select('id')
+                .eq('id', vendorId)
+                .single();
+
             if (!vendor) {
                 return { error: 'Selected vendor does not exist' };
             }
         }
 
-        const oldAccountId = expense.accountId.toString();
+        const oldAccountId = expense.account_id;
         const oldAmount = expense.amount;
 
+        // Handle account balance updates
         if (oldAccountId === accountId) {
             const delta = amount - oldAmount;
             if (delta !== 0) {
-                await Account.findByIdAndUpdate(accountId, { $inc: { balance: -delta } });
+                await supabase
+                    .from('accounts')
+                    .update({ balance: account.balance - delta })
+                    .eq('id', accountId);
             }
         } else {
-            await Account.findByIdAndUpdate(oldAccountId, { $inc: { balance: oldAmount } });
-            await Account.findByIdAndUpdate(accountId, { $inc: { balance: -amount } });
+            // Restore old account balance
+            const { data: oldAccount } = await supabase
+                .from('accounts')
+                .select('*')
+                .eq('id', oldAccountId)
+                .single();
+
+            if (oldAccount) {
+                await supabase
+                    .from('accounts')
+                    .update({ balance: oldAccount.balance + oldAmount })
+                    .eq('id', oldAccountId);
+            }
+
+            // Update new account balance
+            await supabase
+                .from('accounts')
+                .update({ balance: account.balance - amount })
+                .eq('id', accountId);
         }
 
-        expense.date = date;
-        expense.amount = amount;
-        expense.category = category;
-        expense.businessId = data.businessId;
-        expense.accountId = accountId;
-        expense.vendorId = vendorId;
-        expense.description = normalizeText(data.description);
+        // Update transaction
+        const { error } = await supabase
+            .from('transactions')
+            .update({
+                date: date.toISOString(),
+                amount,
+                category,
+                business_id: data.businessId,
+                account_id: accountId,
+                vendor_id: vendorId || null,
+                description: normalizeText(data.description) || null,
+            })
+            .eq('id', id);
 
-        await expense.save();
+        if (error) {
+            console.error('Update transaction error:', error);
+            return { error: 'Failed to update expense record' };
+        }
 
         revalidateExpenseViews();
         return { success: true };
@@ -179,15 +253,37 @@ export async function updateExpense(id: string, data: ExpenseInput) {
 
 export async function deleteExpense(id: string) {
     try {
-        await connect();
+        // Fetch existing expense
+        const { data: expense } = await supabase
+            .from('transactions')
+            .select('*')
+            .eq('id', id)
+            .eq('type', 'expense')
+            .single();
 
-        const expense = await Transaction.findOne({ _id: id, type: 'expense' });
         if (!expense) {
             return { error: 'Expense record not found' };
         }
 
-        await Account.findByIdAndUpdate(expense.accountId, { $inc: { balance: expense.amount } });
-        await Transaction.deleteOne({ _id: id });
+        // Update account balance
+        const { data: account } = await supabase
+            .from('accounts')
+            .select('*')
+            .eq('id', expense.account_id)
+            .single();
+
+        if (account) {
+            await supabase
+                .from('accounts')
+                .update({ balance: account.balance + expense.amount })
+                .eq('id', expense.account_id);
+        }
+
+        // Delete transaction
+        await supabase
+            .from('transactions')
+            .delete()
+            .eq('id', id);
 
         revalidateExpenseViews();
         return { success: true };

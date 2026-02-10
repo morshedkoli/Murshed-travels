@@ -8,6 +8,7 @@ import {
   Receipt,
   Store,
   Users,
+  User,
   Wallet,
   X,
   ChevronRight,
@@ -33,6 +34,12 @@ const navGroups = [
       { href: '/receivable', label: 'Receivable', icon: CreditCard },
       { href: '/payable', label: 'Payable', icon: Receipt },
       { href: '/accounts', label: 'Accounts', icon: Wallet },
+    ],
+  },
+  {
+    label: 'Admin',
+    items: [
+      { href: '/profile', label: 'Profile', icon: User },
     ],
   },
 ];

@@ -1,8 +1,6 @@
 'use server';
 
-import connect from '@/lib/db';
-import Customer from '@/models/Customer';
-import Vendor from '@/models/Vendor';
+import { supabase } from '@/lib/supabase';
 
 type SearchResult = {
   id: string;
@@ -11,10 +9,6 @@ type SearchResult = {
   phone: string;
   href: '/customers' | '/vendors';
 };
-
-function escapeRegex(input: string) {
-  return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
 
 function scoreMatch(query: string, name: string, phone: string) {
   const q = query.toLowerCase();
@@ -30,36 +24,37 @@ export async function searchContacts(rawQuery: string): Promise<SearchResult[]> 
   const query = rawQuery.trim();
   if (query.length < 2) return [];
 
-  await connect();
+  const searchPattern = `%${query}%`;
 
-  const pattern = new RegExp(escapeRegex(query), 'i');
-
-  const [customers, vendors] = await Promise.all([
-    Customer.find({
-      $or: [{ name: pattern }, { phone: pattern }],
-    })
-      .select('name phone')
+  const [customersResult, vendorsResult] = await Promise.all([
+    supabase
+      .from('customers')
+      .select('id, name, phone')
+      .or(`name.ilike.${searchPattern},phone.ilike.${searchPattern}`)
       .limit(6),
-    Vendor.find({
-      $or: [{ name: pattern }, { phone: pattern }],
-    })
-      .select('name phone')
+    supabase
+      .from('vendors')
+      .select('id, name, phone')
+      .or(`name.ilike.${searchPattern},phone.ilike.${searchPattern}`)
       .limit(6),
   ]);
 
+  const customers = customersResult.data || [];
+  const vendors = vendorsResult.data || [];
+
   const results: SearchResult[] = [
     ...customers.map((item) => ({
-      id: item._id.toString(),
+      id: item.id,
       type: 'user' as const,
       name: item.name,
-      phone: item.phone ?? '-',
+      phone: item.phone || '-',
       href: '/customers' as const,
     })),
     ...vendors.map((item) => ({
-      id: item._id.toString(),
+      id: item.id,
       type: 'vendor' as const,
       name: item.name,
-      phone: item.phone ?? '-',
+      phone: item.phone || '-',
       href: '/vendors' as const,
     })),
   ];

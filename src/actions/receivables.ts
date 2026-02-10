@@ -1,12 +1,7 @@
 'use server';
 
-import mongoose from 'mongoose';
 import { revalidatePath } from 'next/cache';
-import connect from '@/lib/db';
-import Account from '@/models/Account';
-import Customer from '@/models/Customer';
-import Receivable from '@/models/Receivable';
-import Transaction from '@/models/Transaction';
+import { supabase } from '@/lib/supabase';
 
 type BusinessType = 'travel' | 'isp';
 
@@ -64,53 +59,63 @@ function revalidateReceivableViews() {
 }
 
 export async function getReceivables() {
-    await connect();
+    const { data: receivables, error } = await supabase
+        .from('receivables')
+        .select(`
+            *,
+            customers:customer_id (name)
+        `)
+        .order('due_date', { ascending: true });
 
-    const receivables = await Receivable.find({})
-        .sort({ dueDate: 1, createdAt: -1 })
-        .populate('customerId', 'name');
+    if (error) {
+        console.error('Error fetching receivables:', error);
+        return [];
+    }
 
-    return receivables.map((item) => ({
-        _id: item._id.toString(),
-        date: item.date.toISOString(),
-        dueDate: item.dueDate ? item.dueDate.toISOString() : '',
+    return (receivables || []).map((item) => ({
+        _id: item.id,
+        date: item.date,
+        dueDate: item.due_date || '',
         amount: item.amount,
-        paidAmount: item.paidAmount ?? 0,
-        remainingAmount: remainingAmount(item.amount, item.paidAmount ?? 0),
-        businessId: (item.businessId as BusinessType) ?? 'travel',
-        customerId: item.customerId?._id?.toString?.() ?? '',
-        customerName: item.customerId?.name ?? 'Unknown Customer',
+        paidAmount: item.paid_amount || 0,
+        remainingAmount: remainingAmount(item.amount, item.paid_amount || 0),
+        businessId: (item.business_id as BusinessType) || 'travel',
+        customerId: item.customer_id || '',
+        customerName: item.customers?.name || 'Unknown Customer',
         status: item.status,
-        description: item.description ?? '',
+        description: item.description || '',
     }));
 }
 
 export async function getReceivableSettlementHistory(receivableId: string) {
-    await connect();
+    const { data: payments, error } = await supabase
+        .from('transactions')
+        .select(`
+            *,
+            accounts:account_id (name)
+        `)
+        .eq('reference_id', receivableId)
+        .eq('reference_model', 'Receivable')
+        .eq('type', 'income')
+        .eq('category', 'Receivable Collection')
+        .order('date', { ascending: false });
 
-    const payments = await Transaction.find({
-        referenceId: receivableId,
-        referenceModel: 'Receivable',
-        type: 'income',
-        category: 'Receivable Collection',
-    })
-        .sort({ date: -1, createdAt: -1 })
-        .populate('accountId', 'name');
+    if (error) {
+        console.error('Error fetching receivable settlement history:', error);
+        return [];
+    }
 
-    return payments.map((item) => ({
-        _id: item._id.toString(),
-        date: item.date.toISOString(),
+    return (payments || []).map((item) => ({
+        _id: item.id,
+        date: item.date,
         amount: item.amount,
-        accountName: item.accountId?.name ?? 'Unknown Account',
-        description: item.description ?? '',
+        accountName: item.accounts?.name || 'Unknown Account',
+        description: item.description || '',
     }));
 }
 
 export async function createReceivable(data: ReceivableInput) {
-    const session = await mongoose.startSession();
     try {
-        await connect();
-
         const date = normalizeDate(data.date);
         if (!date) return { error: 'Valid receivable date is required' };
 
@@ -127,49 +132,52 @@ export async function createReceivable(data: ReceivableInput) {
         const customerId = normalizeText(data.customerId);
         if (!customerId) return { error: 'Customer is required' };
 
-        let customerError = '';
+        // Verify customer exists
+        const { data: customer } = await supabase
+            .from('customers')
+            .select('*')
+            .eq('id', customerId)
+            .single();
 
-        await session.withTransaction(async () => {
-            const customer = await Customer.findById(customerId).session(session);
-            if (!customer) {
-                customerError = 'Selected customer does not exist';
-                await session.abortTransaction();
-                return;
-            }
+        if (!customer) {
+            return { error: 'Selected customer does not exist' };
+        }
 
-            await Receivable.create([
-                {
-                    date,
-                    dueDate,
-                    amount,
-                    paidAmount: 0,
-                    customerId,
-                    businessId: data.businessId,
-                    status: 'unpaid',
-                    description: normalizeText(data.description),
-                },
-            ], { session });
+        // Create receivable
+        const { error: receivableError } = await supabase
+            .from('receivables')
+            .insert({
+                date: date.toISOString(),
+                due_date: dueDate.toISOString(),
+                amount,
+                paid_amount: 0,
+                customer_id: customerId,
+                business_id: data.businessId,
+                status: 'unpaid',
+                description: normalizeText(data.description) || null,
+            });
 
-            await Customer.findByIdAndUpdate(customerId, { $inc: { balance: amount } }, { session });
-        });
+        if (receivableError) {
+            console.error('Create receivable error:', receivableError);
+            return { error: 'Failed to create receivable' };
+        }
 
-        if (customerError) return { error: customerError };
+        // Update customer balance
+        await supabase
+            .from('customers')
+            .update({ balance: customer.balance + amount })
+            .eq('id', customerId);
 
         revalidateReceivableViews();
         return { success: true };
     } catch (error) {
         console.error('Create receivable error:', error);
         return { error: 'Failed to create receivable' };
-    } finally {
-        await session.endSession();
     }
 }
 
 export async function updateReceivable(id: string, data: ReceivableInput) {
-    const session = await mongoose.startSession();
     try {
-        await connect();
-
         const date = normalizeDate(data.date);
         if (!date) return { error: 'Valid receivable date is required' };
 
@@ -196,97 +204,142 @@ export async function updateReceivable(id: string, data: ReceivableInput) {
             return { error: 'Settlement account is required when recording payment' };
         }
 
-        let actionError = '';
+        // Fetch existing receivable
+        const { data: receivable } = await supabase
+            .from('receivables')
+            .select('*')
+            .eq('id', id)
+            .single();
 
-        await session.withTransaction(async () => {
-            const receivable = await Receivable.findById(id).session(session);
-            if (!receivable) {
-                actionError = 'Receivable record not found';
-                await session.abortTransaction();
-                return;
+        if (!receivable) {
+            return { error: 'Receivable record not found' };
+        }
+
+        // Verify customer exists
+        const { data: customer } = await supabase
+            .from('customers')
+            .select('*')
+            .eq('id', customerId)
+            .single();
+
+        if (!customer) {
+            return { error: 'Selected customer does not exist' };
+        }
+
+        // Verify settlement account if payment is being made
+        if (paymentAmount > 0 && settlementAccountId) {
+            const { data: account } = await supabase
+                .from('accounts')
+                .select('*')
+                .eq('id', settlementAccountId)
+                .single();
+
+            if (!account) {
+                return { error: 'Selected settlement account does not exist' };
+            }
+        }
+
+        const oldCustomerId = receivable.customer_id;
+        const oldAmount = receivable.amount;
+        const oldPaidAmount = receivable.paid_amount || 0;
+        const oldRemaining = remainingAmount(oldAmount, oldPaidAmount);
+
+        const newPaidAmount = oldPaidAmount + paymentAmount;
+        if (newPaidAmount > amount) {
+            return { error: 'Payment amount cannot exceed remaining receivable' };
+        }
+
+        const newRemaining = remainingAmount(amount, newPaidAmount);
+        const status = deriveStatus(amount, newPaidAmount);
+
+        // Handle customer balance updates
+        if (oldCustomerId === customerId) {
+            const delta = newRemaining - oldRemaining;
+            if (delta !== 0) {
+                await supabase
+                    .from('customers')
+                    .update({ balance: customer.balance + delta })
+                    .eq('id', customerId);
+            }
+        } else {
+            // Restore old customer balance
+            const { data: oldCustomer } = await supabase
+                .from('customers')
+                .select('*')
+                .eq('id', oldCustomerId)
+                .single();
+
+            if (oldCustomer) {
+                await supabase
+                    .from('customers')
+                    .update({ balance: oldCustomer.balance - oldRemaining })
+                    .eq('id', oldCustomerId);
             }
 
-            const customer = await Customer.findById(customerId).session(session);
-            if (!customer) {
-                actionError = 'Selected customer does not exist';
-                await session.abortTransaction();
-                return;
+            // Update new customer balance
+            await supabase
+                .from('customers')
+                .update({ balance: customer.balance + newRemaining })
+                .eq('id', customerId);
+        }
+
+        // Record payment transaction if applicable
+        if (paymentAmount > 0 && settlementAccountId) {
+            await supabase
+                .from('transactions')
+                .insert({
+                    date: date.toISOString(),
+                    amount: paymentAmount,
+                    type: 'income',
+                    category: 'Receivable Collection',
+                    business_id: data.businessId,
+                    account_id: settlementAccountId,
+                    customer_id: customerId,
+                    description: `Settlement against receivable #${id}`,
+                    reference_id: id,
+                    reference_model: 'Receivable',
+                });
+
+            // Update account balance
+            const { data: account } = await supabase
+                .from('accounts')
+                .select('*')
+                .eq('id', settlementAccountId)
+                .single();
+
+            if (account) {
+                await supabase
+                    .from('accounts')
+                    .update({ balance: account.balance + paymentAmount })
+                    .eq('id', settlementAccountId);
             }
+        }
 
-            if (paymentAmount > 0 && settlementAccountId) {
-                const account = await Account.findById(settlementAccountId).session(session);
-                if (!account) {
-                    actionError = 'Selected settlement account does not exist';
-                    await session.abortTransaction();
-                    return;
-                }
-            }
+        // Update receivable
+        const { error } = await supabase
+            .from('receivables')
+            .update({
+                date: date.toISOString(),
+                due_date: dueDate.toISOString(),
+                amount,
+                paid_amount: newPaidAmount,
+                status,
+                business_id: data.businessId,
+                customer_id: customerId,
+                description: normalizeText(data.description) || null,
+            })
+            .eq('id', id);
 
-            const oldCustomerId = receivable.customerId.toString();
-            const oldAmount = receivable.amount;
-            const oldPaidAmount = receivable.paidAmount ?? 0;
-            const oldRemaining = remainingAmount(oldAmount, oldPaidAmount);
-
-            const newPaidAmount = oldPaidAmount + paymentAmount;
-            if (newPaidAmount > amount) {
-                actionError = 'Payment amount cannot exceed remaining receivable';
-                await session.abortTransaction();
-                return;
-            }
-
-            const newRemaining = remainingAmount(amount, newPaidAmount);
-            const status = deriveStatus(amount, newPaidAmount);
-
-            if (oldCustomerId === customerId) {
-                const delta = newRemaining - oldRemaining;
-                if (delta !== 0) {
-                    await Customer.findByIdAndUpdate(customerId, { $inc: { balance: delta } }, { session });
-                }
-            } else {
-                await Customer.findByIdAndUpdate(oldCustomerId, { $inc: { balance: -oldRemaining } }, { session });
-                await Customer.findByIdAndUpdate(customerId, { $inc: { balance: newRemaining } }, { session });
-            }
-
-            if (paymentAmount > 0 && settlementAccountId) {
-                await Transaction.create([
-                    {
-                        date,
-                        amount: paymentAmount,
-                        type: 'income',
-                        category: 'Receivable Collection',
-                        businessId: data.businessId,
-                        accountId: settlementAccountId,
-                        customerId,
-                        description: `Settlement against receivable #${id}`,
-                        referenceId: receivable._id,
-                        referenceModel: 'Receivable',
-                    },
-                ], { session });
-
-                await Account.findByIdAndUpdate(settlementAccountId, { $inc: { balance: paymentAmount } }, { session });
-            }
-
-            receivable.date = date;
-            receivable.dueDate = dueDate;
-            receivable.amount = amount;
-            receivable.paidAmount = newPaidAmount;
-            receivable.status = status;
-            receivable.businessId = data.businessId;
-            receivable.customerId = customerId;
-            receivable.description = normalizeText(data.description);
-
-            await receivable.save({ session });
-        });
-
-        if (actionError) return { error: actionError };
+        if (error) {
+            console.error('Update receivable error:', error);
+            return { error: 'Failed to update receivable' };
+        }
 
         revalidateReceivableViews();
         return { success: true };
     } catch (error) {
         console.error('Update receivable error:', error);
         return { error: 'Failed to update receivable' };
-    } finally {
-        await session.endSession();
     }
 }
 
@@ -297,10 +350,7 @@ export async function collectReceivablePayment(data: {
     date?: string;
     note?: string;
 }) {
-    const session = await mongoose.startSession();
     try {
-        await connect();
-
         const receivableId = normalizeText(data.receivableId);
         if (!receivableId) return { error: 'Receivable is required' };
 
@@ -313,77 +363,93 @@ export async function collectReceivablePayment(data: {
         const date = data.date ? normalizeDate(data.date) : new Date();
         if (!date) return { error: 'Valid payment date is required' };
 
-        let actionError = '';
-        let remaining = 0;
-        let customerIdForPath = '';
+        // Fetch receivable
+        const { data: receivable } = await supabase
+            .from('receivables')
+            .select('*')
+            .eq('id', receivableId)
+            .single();
 
-        await session.withTransaction(async () => {
-            const receivable = await Receivable.findById(receivableId).session(session);
-            if (!receivable) {
-                actionError = 'Receivable record not found';
-                await session.abortTransaction();
-                return;
-            }
+        if (!receivable) {
+            return { error: 'Receivable record not found' };
+        }
 
-            const account = await Account.findById(settlementAccountId).session(session);
-            if (!account) {
-                actionError = 'Selected settlement account does not exist';
-                await session.abortTransaction();
-                return;
-            }
+        // Fetch account
+        const { data: account } = await supabase
+            .from('accounts')
+            .select('*')
+            .eq('id', settlementAccountId)
+            .single();
 
-            const customer = await Customer.findById(receivable.customerId).session(session);
-            if (!customer) {
-                actionError = 'Customer record not found';
-                await session.abortTransaction();
-                return;
-            }
+        if (!account) {
+            return { error: 'Selected settlement account does not exist' };
+        }
 
-            const currentRemaining = remainingAmount(receivable.amount, receivable.paidAmount ?? 0);
-            if (currentRemaining <= 0) {
-                actionError = 'This receivable is already fully paid';
-                await session.abortTransaction();
-                return;
-            }
+        // Fetch customer
+        const { data: customer } = await supabase
+            .from('customers')
+            .select('*')
+            .eq('id', receivable.customer_id)
+            .single();
 
-            if (amount > currentRemaining) {
-                actionError = 'Payment amount cannot exceed remaining due';
-                await session.abortTransaction();
-                return;
-            }
+        if (!customer) {
+            return { error: 'Customer record not found' };
+        }
 
-            const nextPaidAmount = (receivable.paidAmount ?? 0) + amount;
-            receivable.paidAmount = nextPaidAmount;
-            receivable.status = deriveStatus(receivable.amount, nextPaidAmount);
-            await receivable.save({ session });
+        const currentRemaining = remainingAmount(receivable.amount, receivable.paid_amount || 0);
+        if (currentRemaining <= 0) {
+            return { error: 'This receivable is already fully paid' };
+        }
 
-            await Transaction.create([
-                {
-                    date,
-                    amount,
-                    type: 'income',
-                    category: 'Receivable Collection',
-                    businessId: receivable.businessId,
-                    accountId: settlementAccountId,
-                    customerId: receivable.customerId,
-                    description: normalizeText(data.note) || `Settlement against receivable #${receivableId}`,
-                    referenceId: receivable._id,
-                    referenceModel: 'Receivable',
-                },
-            ], { session });
+        if (amount > currentRemaining) {
+            return { error: 'Payment amount cannot exceed remaining due' };
+        }
 
-            await Account.findByIdAndUpdate(settlementAccountId, { $inc: { balance: amount } }, { session });
-            await Customer.findByIdAndUpdate(receivable.customerId, { $inc: { balance: -amount } }, { session });
+        const nextPaidAmount = (receivable.paid_amount || 0) + amount;
+        const status = deriveStatus(receivable.amount, nextPaidAmount);
 
-            remaining = remainingAmount(receivable.amount, nextPaidAmount);
-            customerIdForPath = receivable.customerId.toString();
-        });
+        // Update receivable
+        await supabase
+            .from('receivables')
+            .update({
+                paid_amount: nextPaidAmount,
+                status,
+            })
+            .eq('id', receivableId);
 
-        if (actionError) return { error: actionError };
+        // Create transaction
+        await supabase
+            .from('transactions')
+            .insert({
+                date: date.toISOString(),
+                amount,
+                type: 'income',
+                category: 'Receivable Collection',
+                business_id: receivable.business_id || 'travel',
+                account_id: settlementAccountId,
+                customer_id: receivable.customer_id,
+                description: normalizeText(data.note) || `Settlement against receivable #${receivableId}`,
+                reference_id: receivableId,
+                reference_model: 'Receivable',
+            });
+
+        // Update account balance
+        await supabase
+            .from('accounts')
+            .update({ balance: account.balance + amount })
+            .eq('id', settlementAccountId);
+
+        // Update customer balance
+        await supabase
+            .from('customers')
+            .update({ balance: customer.balance - amount })
+            .eq('id', receivable.customer_id);
+
+        const remaining = remainingAmount(receivable.amount, nextPaidAmount);
 
         revalidateReceivableViews();
-        if (customerIdForPath) {
-            revalidatePath(`/customers/${customerIdForPath}`);
+        if (receivable.customer_id) {
+            revalidatePath(`/customers/${receivable.customer_id}`);
         }
 
         return {
@@ -393,44 +459,56 @@ export async function collectReceivablePayment(data: {
     } catch (error) {
         console.error('Collect receivable payment error:', error);
         return { error: 'Failed to collect receivable payment' };
-    } finally {
-        await session.endSession();
     }
 }
 
 export async function deleteReceivable(id: string) {
-    const session = await mongoose.startSession();
     try {
-        await connect();
+        // Fetch existing receivable
+        const { data: receivable } = await supabase
+            .from('receivables')
+            .select('*')
+            .eq('id', id)
+            .single();
 
-        let actionError = '';
+        if (!receivable) {
+            return { error: 'Receivable record not found' };
+        }
 
-        await session.withTransaction(async () => {
-            const receivable = await Receivable.findById(id).session(session);
-            if (!receivable) {
-                actionError = 'Receivable record not found';
-                await session.abortTransaction();
-                return;
+        const customerId = receivable.customer_id;
+        const outstanding = remainingAmount(receivable.amount, receivable.paid_amount || 0);
+
+        // Update customer balance
+        if (outstanding !== 0) {
+            const { data: customer } = await supabase
+                .from('customers')
+                .select('*')
+                .eq('id', customerId)
+                .single();
+
+            if (customer) {
+                await supabase
+                    .from('customers')
+                    .update({ balance: customer.balance - outstanding })
+                    .eq('id', customerId);
             }
+        }
 
-            const customerId = receivable.customerId.toString();
-            const outstanding = remainingAmount(receivable.amount, receivable.paidAmount ?? 0);
+        // Delete receivable
+        const { error } = await supabase
+            .from('receivables')
+            .delete()
+            .eq('id', id);
 
-            if (outstanding !== 0) {
-                await Customer.findByIdAndUpdate(customerId, { $inc: { balance: -outstanding } }, { session });
-            }
-
-            await Receivable.deleteOne({ _id: id }, { session });
-        });
-
-        if (actionError) return { error: actionError };
+        if (error) {
+            console.error('Delete receivable error:', error);
+            return { error: 'Failed to delete receivable' };
+        }
 
         revalidateReceivableViews();
         return { success: true };
     } catch (error) {
         console.error('Delete receivable error:', error);
         return { error: 'Failed to delete receivable' };
-    } finally {
-        await session.endSession();
     }
 }

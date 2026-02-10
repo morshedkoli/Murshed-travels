@@ -1,62 +1,83 @@
-import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
-import User from '../models/User';
-import Account from '../models/Account';
 import { loadEnvConfig } from '@next/env';
 
 loadEnvConfig(process.cwd());
 
-const MONGODB_URI = process.env.MONGODB_URI;
-
 async function seed() {
-    if (!MONGODB_URI) {
-        throw new Error('MONGODB_URI is not defined');
-    }
-
     try {
-        await mongoose.connect(MONGODB_URI);
-        console.log('Connected to MongoDB');
+        const { supabase } = await import('../lib/supabase');
+        console.log('Starting database seeding...');
 
         // Seed Admin
         const adminEmail = 'admin@bizledger.local';
         const adminPassword = 'admin'; // Simple for internal use, change on prod
 
         // Check if admin exists
-        const existingAdmin = await User.findOne({ email: adminEmail });
+        const { data: existingAdmin } = await supabase
+            .from('users')
+            .select('id')
+            .eq('email', adminEmail)
+            .single();
+
         if (!existingAdmin) {
             const hashedPassword = await bcrypt.hash(adminPassword, 10);
-            await User.create({
-                email: adminEmail,
-                password: hashedPassword,
-                role: 'admin',
-            });
-            console.log(`Admin created: ${adminEmail} / ${adminPassword}`);
+            const { error } = await supabase
+                .from('users')
+                .insert({
+                    email: adminEmail,
+                    password: hashedPassword,
+                    role: 'admin',
+                });
+
+            if (error) {
+                console.error('Error creating admin:', error);
+            } else {
+                console.log(`Admin created: ${adminEmail} / ${adminPassword}`);
+            }
         } else {
             console.log('Admin already exists');
         }
 
         // Seed Basic Accounts
         const accounts = [
-            { name: 'Cash Hand', type: 'Cash' },
-            { name: 'City Bank', type: 'Bank', bankName: 'City Bank', accountNumber: '123456789' },
-            { name: 'Bkash Personal', type: 'Mobile Banking', accountNumber: '01700000000' },
+            { name: 'Cash Hand', type: 'Cash' as const },
+            { name: 'City Bank', type: 'Bank' as const, bank_name: 'City Bank', account_number: '123456789' },
+            { name: 'Bkash Personal', type: 'Mobile Banking' as const, account_number: '01700000000' },
         ];
 
         for (const acc of accounts) {
-            const exists = await Account.findOne({ name: acc.name });
+            const { data: exists } = await supabase
+                .from('accounts')
+                .select('id')
+                .eq('name', acc.name)
+                .single();
+
             if (!exists) {
-                await Account.create(acc);
-                console.log(`Account created: ${acc.name}`);
+                const { error } = await supabase
+                    .from('accounts')
+                    .insert({
+                        name: acc.name,
+                        type: acc.type,
+                        balance: 0,
+                        bank_name: acc.bank_name || null,
+                        account_number: acc.account_number || null,
+                    });
+
+                if (error) {
+                    console.error(`Error creating account ${acc.name}:`, error);
+                } else {
+                    console.log(`Account created: ${acc.name}`);
+                }
+            } else {
+                console.log(`Account already exists: ${acc.name}`);
             }
         }
 
         console.log('Seeding completed');
+        process.exit(0);
     } catch (error) {
         console.error('Seeding error:', error);
         process.exit(1);
-    } finally {
-        await mongoose.disconnect();
-        process.exit(0);
     }
 }
 
