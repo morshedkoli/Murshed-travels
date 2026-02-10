@@ -346,6 +346,8 @@ export async function updateReceivable(id: string, data: ReceivableInput) {
 export async function collectReceivablePayment(data: {
     receivableId: string;
     amount: number;
+    discountAmount?: number;
+    extraChargeAmount?: number;
     settlementAccountId: string;
     date?: string;
     note?: string;
@@ -356,6 +358,12 @@ export async function collectReceivablePayment(data: {
 
         const amount = parsePositiveAmount(data.amount);
         if (!amount) return { error: 'Payment amount must be greater than 0' };
+
+        const discountAmount = parseNonNegative(data.discountAmount);
+        if (discountAmount === null) return { error: 'Discount amount must be 0 or greater' };
+
+        const extraChargeAmount = parseNonNegative(data.extraChargeAmount);
+        if (extraChargeAmount === null) return { error: 'Extra charge amount must be 0 or greater' };
 
         const settlementAccountId = normalizeText(data.settlementAccountId);
         if (!settlementAccountId) return { error: 'Settlement account is required' };
@@ -396,7 +404,12 @@ export async function collectReceivablePayment(data: {
             return { error: 'Customer record not found' };
         }
 
-        const currentRemaining = remainingAmount(receivable.amount, receivable.paid_amount || 0);
+        const adjustedAmount = (receivable.amount || 0) + extraChargeAmount - discountAmount;
+        if (adjustedAmount < 0) {
+            return { error: 'Discount cannot make receivable total negative' };
+        }
+
+        const currentRemaining = remainingAmount(adjustedAmount, receivable.paid_amount || 0);
         if (currentRemaining <= 0) {
             return { error: 'This receivable is already fully paid' };
         }
@@ -406,12 +419,13 @@ export async function collectReceivablePayment(data: {
         }
 
         const nextPaidAmount = (receivable.paid_amount || 0) + amount;
-        const status = deriveStatus(receivable.amount, nextPaidAmount);
+        const status = deriveStatus(adjustedAmount, nextPaidAmount);
 
         // Update receivable
         await supabase
             .from('receivables')
             .update({
+                amount: adjustedAmount,
                 paid_amount: nextPaidAmount,
                 status,
             })
@@ -442,10 +456,10 @@ export async function collectReceivablePayment(data: {
         // Update customer balance
         await supabase
             .from('customers')
-            .update({ balance: customer.balance - amount })
+            .update({ balance: customer.balance - amount - discountAmount + extraChargeAmount })
             .eq('id', receivable.customer_id);
 
-        const remaining = remainingAmount(receivable.amount, nextPaidAmount);
+        const remaining = remainingAmount(adjustedAmount, nextPaidAmount);
 
         revalidateReceivableViews();
         if (receivable.customer_id) {

@@ -79,6 +79,8 @@ type FormState = {
     category: string;
     serviceType: 'visa' | 'air_ticket' | 'medical' | 'taqamul' | 'hotel' | 'package' | 'other';
     price: string;
+    discountAmount: string;
+    extraChargeAmount: string;
     cost: string;
     status: 'pending' | 'in-progress' | 'ready' | 'delivered' | 'cancelled';
     customerId: string;
@@ -116,6 +118,8 @@ const initialForm: FormState = {
     category: '',
     serviceType: 'visa',
     price: '',
+    discountAmount: '0',
+    extraChargeAmount: '0',
     cost: '',
     status: 'pending',
     customerId: '',
@@ -292,6 +296,8 @@ export function ServiceManager({ services, customers, vendors, initialCustomerId
             category: row.category,
             serviceType: row.serviceType,
             price: String(row.price),
+            discountAmount: '0',
+            extraChargeAmount: '0',
             cost: String(row.cost),
             status: row.status,
             customerId: row.customerId,
@@ -322,12 +328,42 @@ export function ServiceManager({ services, customers, vendors, initialCustomerId
             return;
         }
 
+        const basePrice = Number(form.price);
+        const discountAmount = Number(form.discountAmount || 0);
+        const extraChargeAmount = Number(form.extraChargeAmount || 0);
+
+        if (!Number.isFinite(basePrice) || basePrice < 0) {
+            setError('Base price must be 0 or greater');
+            setSaving(false);
+            return;
+        }
+
+        if (!Number.isFinite(discountAmount) || discountAmount < 0) {
+            setError('Discount must be 0 or greater');
+            setSaving(false);
+            return;
+        }
+
+        if (!Number.isFinite(extraChargeAmount) || extraChargeAmount < 0) {
+            setError('Extra charge must be 0 or greater');
+            setSaving(false);
+            return;
+        }
+
+        if (basePrice - discountAmount + extraChargeAmount < 0) {
+            setError('Final price cannot be negative');
+            setSaving(false);
+            return;
+        }
+
         const payload: ServiceInput = {
             name: form.name,
             description: form.description || undefined,
             category: form.category,
             serviceType: form.serviceType,
-            price: Number(form.price),
+            price: basePrice,
+            discountAmount,
+            extraChargeAmount,
             cost: form.cost ? Number(form.cost) : 0,
             status: form.status,
             customerId: form.customerId,
@@ -684,6 +720,8 @@ export function ServiceManager({ services, customers, vendors, initialCustomerId
                                             category: '',
                                             serviceType: 'visa',
                                             price: '',
+                                            discountAmount: '0',
+                                            extraChargeAmount: '0',
                                             cost: '',
                                         }));
                                         setSelectedVendorService('');
@@ -717,6 +755,8 @@ export function ServiceManager({ services, customers, vendors, initialCustomerId
                                             serviceType: selected.serviceType,
                                             category: selected.category,
                                             price: String(selected.price),
+                                            discountAmount: '0',
+                                            extraChargeAmount: '0',
                                             cost: String(selected.cost || 0),
                                         }));
                                     }}
@@ -734,6 +774,28 @@ export function ServiceManager({ services, customers, vendors, initialCustomerId
                                         ))}
                                     </SelectContent>
                                 </Select>
+                            </div>
+
+                            <div className="space-y-2">
+                                <Label>Discount</Label>
+                                <Input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={form.discountAmount}
+                                    onChange={(e) => setForm((prev) => ({ ...prev, discountAmount: e.target.value }))}
+                                />
+                            </div>
+
+                            <div className="space-y-2">
+                                <Label>Extra Charge</Label>
+                                <Input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={form.extraChargeAmount}
+                                    onChange={(e) => setForm((prev) => ({ ...prev, extraChargeAmount: e.target.value }))}
+                                />
                             </div>
 
                             <div className="space-y-2">
@@ -755,7 +817,7 @@ export function ServiceManager({ services, customers, vendors, initialCustomerId
                                 </Select>
                             </div>
 
-                            <div className="space-y-2">
+                            <div className="space-y-2 sm:col-span-2">
                                 <Label>Expected Delivery Date</Label>
                                 <Input
                                     type="date"
@@ -768,10 +830,18 @@ export function ServiceManager({ services, customers, vendors, initialCustomerId
                         {selectedVendorService && form.price && form.cost && (
                             <div className="rounded-lg border border-border bg-muted/30 p-4">
                                 <p className="mb-2 text-sm font-medium">Pricing Summary</p>
-                                <div className="grid gap-4 sm:grid-cols-3">
+                                <div className="grid gap-4 sm:grid-cols-5">
                                     <div>
-                                        <p className="text-xs text-muted-foreground">Customer Price</p>
+                                        <p className="text-xs text-muted-foreground">Base Price</p>
                                         <p className="text-lg font-semibold">{formatCurrency(Number(form.price))}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-xs text-muted-foreground">Discount</p>
+                                        <p className="text-lg font-semibold text-rose-600">-{formatCurrency(Number(form.discountAmount || 0))}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-xs text-muted-foreground">Extra Charge</p>
+                                        <p className="text-lg font-semibold text-amber-600">+{formatCurrency(Number(form.extraChargeAmount || 0))}</p>
                                     </div>
                                     <div>
                                         <p className="text-xs text-muted-foreground">Vendor Cost</p>
@@ -779,7 +849,7 @@ export function ServiceManager({ services, customers, vendors, initialCustomerId
                                     </div>
                                     <div>
                                         <p className="text-xs text-muted-foreground">Profit</p>
-                                        <p className="text-lg font-semibold text-emerald-600">{formatCurrency(Number(form.price) - Number(form.cost))}</p>
+                                        <p className="text-lg font-semibold text-emerald-600">{formatCurrency((Number(form.price) - Number(form.discountAmount || 0) + Number(form.extraChargeAmount || 0)) - Number(form.cost))}</p>
                                     </div>
                                 </div>
                             </div>

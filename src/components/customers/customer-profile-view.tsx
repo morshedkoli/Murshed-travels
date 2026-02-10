@@ -116,6 +116,8 @@ export function CustomerProfileView({ customer, services, ledger, accounts, tran
     const [paymentOpen, setPaymentOpen] = useState(false);
     const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10));
     const [paymentAmount, setPaymentAmount] = useState('');
+    const [paymentDiscount, setPaymentDiscount] = useState('0');
+    const [paymentExtraCharge, setPaymentExtraCharge] = useState('0');
     const [paymentAccountId, setPaymentAccountId] = useState('');
     const [paymentNote, setPaymentNote] = useState('');
     const [paymentSaving, setPaymentSaving] = useState(false);
@@ -133,6 +135,7 @@ export function CustomerProfileView({ customer, services, ledger, accounts, tran
     const pendingCount = serviceRows.filter((row) => row.status === 'pending' || row.status === 'in-progress').length;
     const outstandingBalance = Math.max(balance, 0);
     const advanceBalance = Math.max(-balance, 0);
+    const paymentNetDueReduction = (Number(paymentAmount) || 0) + (Number(paymentDiscount) || 0) - (Number(paymentExtraCharge) || 0);
 
     // Combine all activities into one chronological list
     const activities = useMemo<ActivityItem[]>(() => {
@@ -278,8 +281,20 @@ export function CustomerProfileView({ customer, services, ledger, accounts, tran
     async function handleRecordPayment(event: React.FormEvent<HTMLFormElement>) {
         event.preventDefault();
         const amount = Number(paymentAmount);
+        const discountAmount = Number(paymentDiscount || 0);
+        const extraChargeAmount = Number(paymentExtraCharge || 0);
         if (!Number.isFinite(amount) || amount <= 0) {
             toast({ title: 'Invalid payment amount', description: 'Please enter an amount greater than 0.', variant: 'error' });
+            return;
+        }
+
+        if (!Number.isFinite(discountAmount) || discountAmount < 0) {
+            toast({ title: 'Invalid discount', description: 'Discount must be 0 or greater.', variant: 'error' });
+            return;
+        }
+
+        if (!Number.isFinite(extraChargeAmount) || extraChargeAmount < 0) {
+            toast({ title: 'Invalid extra charge', description: 'Extra charge must be 0 or greater.', variant: 'error' });
             return;
         }
 
@@ -293,6 +308,8 @@ export function CustomerProfileView({ customer, services, ledger, accounts, tran
             customerId: customer._id,
             accountId: paymentAccountId,
             amount,
+            discountAmount,
+            extraChargeAmount,
             date: paymentDate,
             note: paymentNote || undefined,
         });
@@ -323,6 +340,8 @@ export function CustomerProfileView({ customer, services, ledger, accounts, tran
         setBalance(balance - paidAmount);
         setPaymentOpen(false);
         setPaymentAmount('');
+        setPaymentDiscount('0');
+        setPaymentExtraCharge('0');
         setPaymentAccountId('');
         setPaymentNote('');
 
@@ -745,6 +764,14 @@ export function CustomerProfileView({ customer, services, ledger, accounts, tran
                                 <Label>Amount</Label>
                                 <Input type="number" min="0.01" step="0.01" value={paymentAmount} onChange={(e) => setPaymentAmount(e.target.value)} required />
                             </div>
+                            <div className="space-y-1.5">
+                                <Label>Discount</Label>
+                                <Input type="number" min="0" step="0.01" value={paymentDiscount} onChange={(e) => setPaymentDiscount(e.target.value)} />
+                            </div>
+                            <div className="space-y-1.5">
+                                <Label>Extra Charge</Label>
+                                <Input type="number" min="0" step="0.01" value={paymentExtraCharge} onChange={(e) => setPaymentExtraCharge(e.target.value)} />
+                            </div>
                         </div>
 
                         <div className="space-y-1.5">
@@ -764,6 +791,18 @@ export function CustomerProfileView({ customer, services, ledger, accounts, tran
                         <div className="space-y-1.5">
                             <Label>Note</Label>
                             <Input value={paymentNote} onChange={(e) => setPaymentNote(e.target.value)} placeholder="Optional" />
+                        </div>
+
+                        <div
+                            className={`rounded-md border px-3 py-2 text-xs ${
+                                paymentNetDueReduction > 0
+                                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                    : paymentNetDueReduction < 0
+                                        ? 'border-rose-200 bg-rose-50 text-rose-700'
+                                        : 'border-border bg-muted/30 text-muted-foreground'
+                            }`}
+                        >
+                            Net due reduction = Paid + Discount - Extra Charge = {money(paymentNetDueReduction)}
                         </div>
 
                         <DialogFooter>

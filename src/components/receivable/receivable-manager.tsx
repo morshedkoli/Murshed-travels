@@ -126,6 +126,8 @@ export function ReceivableManager({ entries, customers, accounts, filterContext,
     const [paymentTarget, setPaymentTarget] = useState<ReceivableRow | null>(null);
     const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10));
     const [paymentAmount, setPaymentAmount] = useState('');
+    const [paymentDiscount, setPaymentDiscount] = useState('0');
+    const [paymentExtraCharge, setPaymentExtraCharge] = useState('0');
     const [paymentAccountId, setPaymentAccountId] = useState('');
     const [paymentNote, setPaymentNote] = useState('');
     const [paymentSaving, setPaymentSaving] = useState(false);
@@ -135,6 +137,7 @@ export function ReceivableManager({ entries, customers, accounts, filterContext,
         () => rows.reduce((sum, row) => sum + row.remainingAmount, 0),
         [rows]
     );
+    const paymentNetDueReduction = (Number(paymentAmount) || 0) + (Number(paymentDiscount) || 0) - (Number(paymentExtraCharge) || 0);
 
     function openCreate() {
         setEditingId(null);
@@ -230,6 +233,8 @@ export function ReceivableManager({ entries, customers, accounts, filterContext,
         setPaymentTarget(row);
         setPaymentDate(new Date().toISOString().slice(0, 10));
         setPaymentAmount(row.remainingAmount > 0 ? String(row.remainingAmount) : '');
+        setPaymentDiscount('0');
+        setPaymentExtraCharge('0');
         setPaymentAccountId('');
         setPaymentNote('');
     }
@@ -239,8 +244,20 @@ export function ReceivableManager({ entries, customers, accounts, filterContext,
         if (!paymentTarget) return;
 
         const amount = Number(paymentAmount);
+        const discountAmount = Number(paymentDiscount || 0);
+        const extraChargeAmount = Number(paymentExtraCharge || 0);
         if (!Number.isFinite(amount) || amount <= 0) {
             toast({ title: 'Invalid amount', description: 'Enter amount greater than 0', variant: 'error' });
+            return;
+        }
+
+        if (!Number.isFinite(discountAmount) || discountAmount < 0) {
+            toast({ title: 'Invalid discount', description: 'Discount must be 0 or greater', variant: 'error' });
+            return;
+        }
+
+        if (!Number.isFinite(extraChargeAmount) || extraChargeAmount < 0) {
+            toast({ title: 'Invalid extra charge', description: 'Extra charge must be 0 or greater', variant: 'error' });
             return;
         }
 
@@ -258,6 +275,8 @@ export function ReceivableManager({ entries, customers, accounts, filterContext,
         const result = await collectReceivablePayment({
             receivableId: paymentTarget._id,
             amount,
+            discountAmount,
+            extraChargeAmount,
             settlementAccountId: paymentAccountId,
             date: paymentDate,
             note: paymentNote || undefined,
@@ -273,6 +292,8 @@ export function ReceivableManager({ entries, customers, accounts, filterContext,
         setRows(latest);
         setPaymentTarget(null);
         setPaymentAmount('');
+        setPaymentDiscount('0');
+        setPaymentExtraCharge('0');
         setPaymentAccountId('');
         setPaymentNote('');
         toast({ title: 'Payment recorded', variant: 'success' });
@@ -522,6 +543,14 @@ export function ReceivableManager({ entries, customers, accounts, filterContext,
                                 <Label>Amount</Label>
                                 <Input type="number" min="0.01" step="0.01" value={paymentAmount} onChange={(e) => setPaymentAmount(e.target.value)} required />
                             </div>
+                            <div className="space-y-2">
+                                <Label>Discount</Label>
+                                <Input type="number" min="0" step="0.01" value={paymentDiscount} onChange={(e) => setPaymentDiscount(e.target.value)} />
+                            </div>
+                            <div className="space-y-2">
+                                <Label>Extra Charge</Label>
+                                <Input type="number" min="0" step="0.01" value={paymentExtraCharge} onChange={(e) => setPaymentExtraCharge(e.target.value)} />
+                            </div>
                         </div>
 
                         <div className="space-y-2">
@@ -541,6 +570,18 @@ export function ReceivableManager({ entries, customers, accounts, filterContext,
                         <div className="space-y-2">
                             <Label>Note</Label>
                             <Input value={paymentNote} onChange={(e) => setPaymentNote(e.target.value)} placeholder="Optional" />
+                        </div>
+
+                        <div
+                            className={`rounded-md border px-3 py-2 text-xs ${
+                                paymentNetDueReduction > 0
+                                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                    : paymentNetDueReduction < 0
+                                        ? 'border-rose-200 bg-rose-50 text-rose-700'
+                                        : 'border-border bg-muted/30 text-muted-foreground'
+                            }`}
+                        >
+                            Net due reduction = Paid + Discount - Extra Charge = {money(paymentNetDueReduction)}
                         </div>
 
                         <DialogFooter>

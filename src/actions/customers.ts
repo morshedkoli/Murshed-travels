@@ -189,6 +189,12 @@ function parsePositiveAmount(value: number) {
     return Number(value);
 }
 
+function parseNonNegativeAmount(value?: number) {
+    if (value === undefined) return 0;
+    if (!Number.isFinite(value) || value < 0) return null;
+    return Number(value);
+}
+
 function normalizeDate(value?: string) {
     if (!value) return new Date();
     const date = new Date(value);
@@ -200,6 +206,8 @@ export async function recordCustomerPayment(data: {
     customerId: string;
     accountId: string;
     amount: number;
+    discountAmount?: number;
+    extraChargeAmount?: number;
     date?: string;
     note?: string;
 }) {
@@ -207,6 +215,16 @@ export async function recordCustomerPayment(data: {
         const amount = parsePositiveAmount(data.amount);
         if (!amount) {
             return { error: 'Payment amount must be greater than 0' };
+        }
+
+        const discountAmount = parseNonNegativeAmount(data.discountAmount);
+        if (discountAmount === null) {
+            return { error: 'Discount amount must be 0 or greater' };
+        }
+
+        const extraChargeAmount = parseNonNegativeAmount(data.extraChargeAmount);
+        if (extraChargeAmount === null) {
+            return { error: 'Extra charge amount must be 0 or greater' };
         }
 
         const date = normalizeDate(data.date);
@@ -254,12 +272,19 @@ export async function recordCustomerPayment(data: {
             .neq('status', 'paid')
             .order('due_date', { ascending: true });
 
+        const workingReceivables = (receivables || []).map((item) => ({
+            ...item,
+            amount: item.amount ?? 0,
+            paid_amount: item.paid_amount ?? 0,
+            status: item.status,
+        }));
+
         let remainingPayment = amount;
         let settledAmount = 0;
+        let discountedAmount = 0;
         const transactions = [];
-        const receivableUpdates = [];
 
-        for (const receivable of (receivables || [])) {
+        for (const receivable of workingReceivables) {
             if (remainingPayment <= 0) break;
             const dueAmount = Math.max(0, receivable.amount - (receivable.paid_amount ?? 0));
             if (dueAmount <= 0) continue;
@@ -268,11 +293,8 @@ export async function recordCustomerPayment(data: {
             const nextPaid = (receivable.paid_amount ?? 0) + settled;
             const newStatus = nextPaid >= receivable.amount ? 'paid' : 'partial';
 
-            receivableUpdates.push({
-                id: receivable.id,
-                paid_amount: nextPaid,
-                status: newStatus,
-            });
+            receivable.paid_amount = nextPaid;
+            receivable.status = newStatus;
 
             transactions.push({
                 date: date.toISOString(),
@@ -289,6 +311,25 @@ export async function recordCustomerPayment(data: {
 
             remainingPayment -= settled;
             settledAmount += settled;
+        }
+
+        let remainingDiscount = discountAmount;
+        for (const receivable of workingReceivables) {
+            if (remainingDiscount <= 0) break;
+            const dueAmount = Math.max(0, receivable.amount - (receivable.paid_amount ?? 0));
+            if (dueAmount <= 0) continue;
+
+            const appliedDiscount = Math.min(dueAmount, remainingDiscount);
+            receivable.amount = receivable.amount - appliedDiscount;
+            const nextDueAmount = Math.max(0, receivable.amount - (receivable.paid_amount ?? 0));
+            receivable.status = nextDueAmount <= 0 ? 'paid' : 'partial';
+
+            remainingDiscount -= appliedDiscount;
+            discountedAmount += appliedDiscount;
+        }
+
+        if (remainingDiscount > 0) {
+            return { error: 'Discount amount exceeds total customer due' };
         }
 
         const advanceAmount = Math.max(0, remainingPayment);
@@ -309,14 +350,32 @@ export async function recordCustomerPayment(data: {
         const appliedTotal = settledAmount + advanceAmount;
 
         // Update receivables
-        for (const update of receivableUpdates) {
+        for (const receivable of workingReceivables) {
             await supabase
                 .from('receivables')
                 .update({
-                    paid_amount: update.paid_amount,
-                    status: update.status,
+                    amount: receivable.amount,
+                    paid_amount: receivable.paid_amount,
+                    status: receivable.status,
                 })
-                .eq('id', update.id);
+                .eq('id', receivable.id);
+        }
+
+        if (extraChargeAmount > 0) {
+            const chargeDueDate = new Date(date);
+            chargeDueDate.setDate(chargeDueDate.getDate() + 7);
+            await supabase
+                .from('receivables')
+                .insert({
+                    business_id: 'travel',
+                    customer_id: customerId,
+                    amount: extraChargeAmount,
+                    paid_amount: 0,
+                    date: date.toISOString(),
+                    due_date: chargeDueDate.toISOString(),
+                    status: 'unpaid',
+                    description: data.note?.trim() || 'Extra charge applied during payment',
+                });
         }
 
         // Create transactions
@@ -335,7 +394,7 @@ export async function recordCustomerPayment(data: {
         // Update customer balance
         await supabase
             .from('customers')
-            .update({ balance: customer.balance - appliedTotal })
+            .update({ balance: customer.balance - appliedTotal - discountedAmount + extraChargeAmount })
             .eq('id', customerId);
 
         const ledger = await getCustomerLedger(data.customerId);
@@ -350,6 +409,8 @@ export async function recordCustomerPayment(data: {
             success: true,
             appliedAmount: appliedTotal,
             settledAmount,
+            discountedAmount,
+            extraChargeAmount,
             advanceAmount,
             totalDue: ledger.totalDue,
         };

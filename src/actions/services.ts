@@ -8,6 +8,8 @@ export type ServiceInput = {
     description?: string;
     category: string;
     price: number;
+    discountAmount?: number;
+    extraChargeAmount?: number;
     cost?: number;
     status: 'pending' | 'in-progress' | 'ready' | 'delivered' | 'cancelled';
     customerId: string;
@@ -210,8 +212,17 @@ export async function createService(data: ServiceInput) {
         const category = normalizeText(data.category);
         if (!category) return { error: 'Category is required' };
 
-        const price = parseAmount(data.price);
-        if (price === null) return { error: 'Price must be 0 or greater' };
+        const basePrice = parseAmount(data.price);
+        if (basePrice === null) return { error: 'Price must be 0 or greater' };
+
+        const discountAmount = data.discountAmount !== undefined ? parseAmount(data.discountAmount) : 0;
+        if (discountAmount === null) return { error: 'Discount must be 0 or greater' };
+
+        const extraChargeAmount = data.extraChargeAmount !== undefined ? parseAmount(data.extraChargeAmount) : 0;
+        if (extraChargeAmount === null) return { error: 'Extra charge must be 0 or greater' };
+
+        const price = basePrice - discountAmount + extraChargeAmount;
+        if (price < 0) return { error: 'Final price cannot be negative' };
 
         const cost = data.cost !== undefined ? parseAmount(data.cost) || 0 : 0;
         const profit = price - cost;
@@ -251,9 +262,17 @@ export async function createService(data: ServiceInput) {
         }
 
         // Create service data
+        const adjustmentTags: string[] = [];
+        if (discountAmount > 0) adjustmentTags.push(`Discount: ${discountAmount}`);
+        if (extraChargeAmount > 0) adjustmentTags.push(`Extra charge: ${extraChargeAmount}`);
+        const descriptionText = normalizeText(data.description);
+        const mergedDescription = adjustmentTags.length > 0
+            ? `${descriptionText ? `${descriptionText} | ` : ''}${adjustmentTags.join(' | ')}`
+            : descriptionText;
+
         const serviceData: Record<string, unknown> = {
             name,
-            description: normalizeText(data.description) || null,
+            description: mergedDescription || null,
             category,
             service_type: data.serviceType,
             price,
@@ -434,8 +453,17 @@ export async function updateService(id: string, data: ServiceInput) {
         const category = normalizeText(data.category);
         if (!category) return { error: 'Category is required' };
 
-        const price = parseAmount(data.price);
-        if (price === null) return { error: 'Price must be 0 or greater' };
+        const basePrice = parseAmount(data.price);
+        if (basePrice === null) return { error: 'Price must be 0 or greater' };
+
+        const discountAmount = data.discountAmount !== undefined ? parseAmount(data.discountAmount) : 0;
+        if (discountAmount === null) return { error: 'Discount must be 0 or greater' };
+
+        const extraChargeAmount = data.extraChargeAmount !== undefined ? parseAmount(data.extraChargeAmount) : 0;
+        if (extraChargeAmount === null) return { error: 'Extra charge must be 0 or greater' };
+
+        const price = basePrice - discountAmount + extraChargeAmount;
+        if (price < 0) return { error: 'Final price cannot be negative' };
 
         const cost = data.cost !== undefined ? parseAmount(data.cost) || 0 : 0;
         const profit = price - cost;
@@ -470,9 +498,17 @@ export async function updateService(id: string, data: ServiceInput) {
         const oldVendorId = service.vendor_id;
 
         // Update service data
+        const adjustmentTags: string[] = [];
+        if (discountAmount > 0) adjustmentTags.push(`Discount: ${discountAmount}`);
+        if (extraChargeAmount > 0) adjustmentTags.push(`Extra charge: ${extraChargeAmount}`);
+        const descriptionText = normalizeText(data.description);
+        const mergedDescription = adjustmentTags.length > 0
+            ? `${descriptionText ? `${descriptionText} | ` : ''}${adjustmentTags.join(' | ')}`
+            : descriptionText;
+
         const serviceData: Record<string, unknown> = {
             name,
-            description: normalizeText(data.description) || null,
+            description: mergedDescription || null,
             category,
             service_type: data.serviceType,
             price,
