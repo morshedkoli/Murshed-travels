@@ -365,7 +365,14 @@ export function VendorProfileView({ vendor, services, ledger, accounts, transact
             return;
         }
 
-        setTemplates(Array.isArray(result.serviceTemplates) ? result.serviceTemplates : []);
+        setTemplates((current) => current.map((template) => {
+            if (template.name !== editingTemplate.name) return template;
+            return {
+                ...template,
+                defaultPrice: numericPrice,
+                defaultCost: numericCost,
+            };
+        }));
         setCatalogNotice(`Price and cost updated for ${editingTemplate.name}.`);
         setEditingTemplate(null);
         setNextPrice('');
@@ -395,7 +402,7 @@ export function VendorProfileView({ vendor, services, ledger, accounts, transact
             return;
         }
 
-        setTemplates(Array.isArray(result.serviceTemplates) ? result.serviceTemplates : []);
+        setTemplates((current) => current.filter((template) => template.name !== deletingTemplate.name));
         setCatalogNotice(`Vendor listed service removed: ${deletingTemplate.name}.`);
         toast({
             title: 'Service deleted',

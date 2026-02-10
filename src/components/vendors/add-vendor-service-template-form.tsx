@@ -57,7 +57,7 @@ export function AddVendorServiceTemplateForm({ vendorId, onSaved }: AddVendorSer
         });
 
         if (onSaved) {
-            onSaved(Array.isArray(result.serviceTemplates) ? result.serviceTemplates : [], { updated: Boolean(result.updated) });
+            onSaved([], { updated: Boolean(result.updated) });
         }
 
         // Force a full page reload to get fresh data from server
