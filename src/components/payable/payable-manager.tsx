@@ -52,6 +52,7 @@ type PayableRow = {
 type Option = {
     _id: string;
     name: string;
+    balance?: number;
 };
 
 type PayableManagerProps = {
@@ -180,7 +181,7 @@ export function PayableManager({ entries, vendors, accounts, filterContext, clea
             }
 
             const latest = await getPayables();
-            setRows(latest);
+            setRows(latest as PayableRow[]);
             setIsOpen(false);
             setEditingId(null);
             setForm(initialForm);
@@ -389,6 +390,18 @@ export function PayableManager({ entries, vendors, accounts, filterContext, clea
                                                 ))}
                                             </SelectContent>
                                         </Select>
+                                        {(() => {
+                                            const acct = accounts.find(a => a._id === form.settlementAccountId);
+                                            const payAmt = Number(form.paymentAmount) || 0;
+                                            if (!acct || acct.balance === undefined) return null;
+                                            const insufficient = payAmt > acct.balance;
+                                            return (
+                                                <p className={`text-xs mt-1 ${insufficient ? 'text-amber-600 font-medium' : 'text-muted-foreground'}`}>
+                                                    Account balance: {money(acct.balance)}
+                                                    {insufficient && ' — payment will overdraft this account'}
+                                                </p>
+                                            );
+                                        })()}
                                     </div>
                                 </>
                             )}

@@ -1,7 +1,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { supabase } from '@/lib/supabase';
+import { prisma } from '@/lib/prisma';
 
 type SalaryBusiness = 'travel' | 'isp';
 
@@ -42,115 +42,93 @@ function revalidateSalaryViews() {
 }
 
 export async function getSalaryRecords(filters?: { month?: string; year?: number; businessId?: SalaryBusiness }) {
-    let query = supabase
-        .from('salaries')
-        .select(`
-            *,
-            employees:employee_id (name, role, base_salary, active)
-        `);
-
-    if (filters?.month && isValidMonth(filters.month)) {
-        query = query.eq('month', filters.month);
-    }
-    
-    if (filters?.year) {
-        query = query.eq('year', filters.year);
-    }
-
-    if (filters?.businessId) {
-        if (filters.businessId === 'travel') {
-            query = query.or('business_id.eq.travel,business_id.is.null');
-        } else {
-            query = query.eq('business_id', filters.businessId);
+    try {
+        const where: any = {};
+        if (filters?.month && isValidMonth(filters.month)) where.month = filters.month;
+        if (filters?.year) where.year = filters.year;
+        if (filters?.businessId) {
+            if (filters.businessId === 'travel') {
+                where.OR = [{ businessId: 'travel' }, { businessId: null }];
+            } else {
+                where.businessId = filters.businessId;
+            }
         }
-    }
 
-    const { data: records, error } = await query
-        .order('year', { ascending: false })
-        .order('month', { ascending: false });
+        const records = await prisma.salary.findMany({
+            where,
+            include: { employee: { select: { name: true, role: true, baseSalary: true, active: true } } },
+            orderBy: [{ year: 'desc' }, { month: 'desc' }]
+        });
 
-    if (error) {
+        return records.map((record) => ({
+            _id: record.id,
+            employeeId: record.employeeId || '',
+            employeeName: record.employee?.name || 'Unknown Employee',
+            employeeRole: record.employee?.role || '-',
+            amount: record.amount,
+            month: record.month,
+            year: record.year,
+            status: record.status as 'unpaid' | 'paid',
+            businessId: (record.businessId as SalaryBusiness) || 'travel',
+            paidDate: record.paidDate ? record.paidDate.toISOString() : '',
+            createdAt: record.createdAt.toISOString(),
+        }));
+    } catch (error) {
         console.error('Error fetching salary records:', error);
         return [];
     }
-
-    return (records || []).map((record) => ({
-        _id: record.id,
-        employeeId: record.employee_id || '',
-        employeeName: record.employees?.name || 'Unknown Employee',
-        employeeRole: record.employees?.role || '-',
-        amount: record.amount,
-        month: record.month,
-        year: record.year,
-        status: record.status as 'unpaid' | 'paid',
-        businessId: (record.business_id as SalaryBusiness) || 'travel',
-        paidDate: record.paid_date || '',
-        createdAt: record.created_at,
-    }));
 }
 
 export async function generateMonthlySalaries(input: GenerateInput) {
     try {
         const month = normalizeText(input.month);
-        if (!month || !isValidMonth(month)) {
-            return { error: 'Month must be in YYYY-MM format' };
-        }
+        if (!month || !isValidMonth(month)) return { error: 'Month must be in YYYY-MM format' };
 
         const year = Number(input.year);
-        if (!Number.isInteger(year) || year < 2000 || year > 3000) {
-            return { error: 'Year must be a valid number' };
-        }
+        if (!Number.isInteger(year) || year < 2000 || year > 3000) return { error: 'Year must be a valid number' };
 
         const businessId = input.businessId;
 
         let createdCount = 0;
         let updatedCount = 0;
 
-        // Fetch active employees
-        let employeeQuery = supabase
-            .from('employees')
-            .select('*')
-            .eq('active', true);
-
+        const employeeWhere: any = { active: true };
         if (businessId === 'travel') {
-            employeeQuery = employeeQuery.or('business_id.eq.travel,business_id.is.null');
+            employeeWhere.OR = [{ businessId: 'travel' }, { businessId: null }];
         } else {
-            employeeQuery = employeeQuery.eq('business_id', businessId);
+            employeeWhere.businessId = businessId;
         }
 
-        const { data: employees } = await employeeQuery;
+        const employees = await prisma.employee.findMany({ where: employeeWhere });
 
-        for (const employee of (employees || [])) {
-            // Check if salary record exists
-            const { data: existing } = await supabase
-                .from('salaries')
-                .select('*')
-                .eq('employee_id', employee.id)
-                .eq('month', month)
-                .eq('year', year)
-                .eq('business_id', businessId)
-                .single();
+        for (const employee of employees) {
+            const existing = await prisma.salary.findFirst({
+                where: {
+                    employeeId: employee.id,
+                    month,
+                    year,
+                    businessId
+                }
+            });
 
             if (!existing) {
-                // Create new salary record
-                await supabase
-                    .from('salaries')
-                    .insert({
-                        employee_id: employee.id,
-                        amount: employee.base_salary,
+                await prisma.salary.create({
+                    data: {
+                        employeeId: employee.id,
+                        amount: employee.baseSalary,
                         month,
                         year,
                         status: 'unpaid',
-                        business_id: businessId,
-                    });
-                createdCount += 1;
-            } else if (existing.status === 'unpaid' && existing.amount !== employee.base_salary) {
-                // Update unpaid record with new salary
-                await supabase
-                    .from('salaries')
-                    .update({ amount: employee.base_salary })
-                    .eq('id', existing.id);
-                updatedCount += 1;
+                        businessId
+                    }
+                });
+                createdCount++;
+            } else if (existing.status === 'unpaid' && existing.amount !== employee.baseSalary) {
+                await prisma.salary.update({
+                    where: { id: existing.id },
+                    data: { amount: employee.baseSalary }
+                });
+                updatedCount++;
             }
         }
 
@@ -170,68 +148,43 @@ export async function paySalary(input: PaySalaryInput) {
         const paidDate = normalizePaidDate(input.paidDate);
         if (!paidDate) return { error: 'Paid date is invalid' };
 
-        // Fetch salary record
-        const { data: salary } = await supabase
-            .from('salaries')
-            .select(`
-                *,
-                employees:employee_id (name)
-            `)
-            .eq('id', input.salaryId)
-            .single();
+        const salary = await prisma.salary.findUnique({
+            where: { id: input.salaryId },
+            include: { employee: { select: { name: true } } }
+        });
 
-        if (!salary) {
-            return { error: 'Salary record not found' };
-        }
+        if (!salary) return { error: 'Salary record not found' };
+        if (salary.status === 'paid') return { error: 'This salary is already paid' };
 
-        if (salary.status === 'paid') {
-            return { error: 'This salary is already paid' };
-        }
+        const account = await prisma.account.findUnique({ where: { id: accountId } });
+        if (!account) return { error: 'Selected account does not exist' };
+        if ((account.balance || 0) < salary.amount) return { error: 'Insufficient account balance for salary payment' };
 
-        // Verify account exists and has sufficient balance
-        const { data: account } = await supabase
-            .from('accounts')
-            .select('*')
-            .eq('id', accountId)
-            .single();
-
-        if (!account) {
-            return { error: 'Selected account does not exist' };
-        }
-
-        if ((account.balance || 0) < salary.amount) {
-            return { error: 'Insufficient account balance for salary payment' };
-        }
-
-        // Update salary status
-        await supabase
-            .from('salaries')
-            .update({
-                status: 'paid',
-                paid_date: paidDate.toISOString(),
-            })
-            .eq('id', input.salaryId);
-
-        // Create expense transaction
-        await supabase
-            .from('transactions')
-            .insert({
-                date: paidDate.toISOString(),
-                amount: salary.amount,
-                type: 'expense',
-                category: 'Salary',
-                business_id: salary.business_id || 'travel',
-                account_id: accountId,
-                description: `Salary payment for ${salary.employees?.name || 'employee'} (${salary.month})`,
-                reference_id: input.salaryId,
-                reference_model: 'Salary',
+        await prisma.$transaction(async (tx) => {
+            await tx.salary.update({
+                where: { id: input.salaryId },
+                data: { status: 'paid', paidDate }
             });
 
-        // Update account balance
-        await supabase
-            .from('accounts')
-            .update({ balance: account.balance - salary.amount })
-            .eq('id', accountId);
+            await tx.transaction.create({
+                data: {
+                    date: paidDate,
+                    amount: salary.amount,
+                    type: 'expense',
+                    category: 'Salary',
+                    businessId: salary.businessId || 'travel',
+                    accountId,
+                    description: `Salary payment for ${salary.employee?.name || 'employee'} (${salary.month})`,
+                    referenceId: input.salaryId,
+                    referenceModel: 'Salary',
+                }
+            });
+
+            await tx.account.update({
+                where: { id: accountId },
+                data: { balance: { decrement: salary.amount } }
+            });
+        });
 
         revalidateSalaryViews();
         return { success: true };

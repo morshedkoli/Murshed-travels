@@ -1,7 +1,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { supabase } from '@/lib/supabase';
+import { prisma } from '@/lib/prisma';
 
 type VendorCategory = 'visa' | 'air_ticket' | 'medical' | 'taqamul' | 'hotel' | 'transport' | 'package' | 'other';
 
@@ -45,10 +45,10 @@ function normalizeDate(value?: string) {
 type VendorTemplateLike = {
     id?: string;
     name?: string;
-    service_type?: string;
+    serviceType?: string;
     category?: string;
-    default_price?: number;
-    default_cost?: number;
+    defaultPrice?: number;
+    defaultCost?: number;
 };
 
 function toTemplatePayload(template: VendorTemplateLike) {
@@ -56,37 +56,36 @@ function toTemplatePayload(template: VendorTemplateLike) {
     return {
         _id: template.id || '',
         name: normalizedName,
-        serviceType: template.service_type || 'other',
+        serviceType: template.serviceType || 'other',
         category: template.category || normalizedName,
-        defaultPrice: template.default_price ?? 0,
-        defaultCost: template.default_cost ?? 0,
+        defaultPrice: template.defaultPrice ?? 0,
+        defaultCost: template.defaultCost ?? 0,
     };
 }
 
 export async function getVendors() {
-    const { data: vendors, error } = await supabase
-        .from('vendors')
-        .select(`
-            *,
-            vendor_service_categories(category),
-            vendor_service_templates(*)
-        `)
-        .order('created_at', { ascending: false });
+    try {
+        const vendors = await prisma.vendor.findMany({
+            include: {
+                serviceCategories: true,
+                serviceTemplates: true
+            },
+            orderBy: { createdAt: 'desc' }
+        });
 
-    if (error) {
+        return vendors.map((vendor) => ({
+            _id: vendor.id,
+            name: vendor.name,
+            phone: vendor.phone,
+            serviceType: vendorCategoryLabels[(vendor.serviceCategories?.[0]?.category as VendorCategory) || 'other'],
+            serviceTemplates: (vendor.serviceTemplates || []).map(toTemplatePayload),
+            balance: vendor.balance,
+            createdAt: vendor.createdAt.toISOString(),
+        }));
+    } catch (error) {
         console.error('Error fetching vendors:', error);
         return [];
     }
-
-    return (vendors || []).map((vendor) => ({
-        _id: vendor.id,
-        name: vendor.name,
-        phone: vendor.phone,
-        serviceType: vendorCategoryLabels[(vendor.vendor_service_categories?.[0]?.category as VendorCategory) || 'other'],
-        serviceTemplates: (vendor.vendor_service_templates || []).map(toTemplatePayload),
-        balance: vendor.balance,
-        createdAt: vendor.created_at,
-    }));
 }
 
 export async function createVendor(data: {
@@ -96,35 +95,19 @@ export async function createVendor(data: {
 }) {
     try {
         const name = normalizeText(data.name);
-        if (!name) {
-            return { error: 'Vendor name is required' };
-        }
+        if (!name) return { error: 'Vendor name is required' };
 
-        if (!isVendorCategory(data.serviceCategory)) {
-            return { error: 'Service category is required' };
-        }
+        if (!isVendorCategory(data.serviceCategory)) return { error: 'Service category is required' };
 
-        const { data: vendor, error } = await supabase
-            .from('vendors')
-            .insert({
+        const vendor = await prisma.vendor.create({
+            data: {
                 name,
                 phone: normalizeText(data.phone) || null,
-            })
-            .select()
-            .single();
-
-        if (error) {
-            console.error('Create vendor error:', error);
-            return { error: 'Failed to create vendor' };
-        }
-
-        // Add service category
-        await supabase
-            .from('vendor_service_categories')
-            .insert({
-                vendor_id: vendor.id,
-                category: data.serviceCategory,
-            });
+                serviceCategories: {
+                    create: { category: data.serviceCategory }
+                }
+            }
+        });
 
         revalidatePath('/vendors');
 
@@ -142,40 +125,40 @@ export async function createVendor(data: {
 }
 
 export async function getVendorById(id: string) {
-    const { data: vendor, error } = await supabase
-        .from('vendors')
-        .select(`
-            *,
-            vendor_service_categories(category),
-            vendor_service_templates(*)
-        `)
-        .eq('id', id)
-        .single();
+    try {
+        const vendor = await prisma.vendor.findUnique({
+            where: { id },
+            include: {
+                serviceCategories: true,
+                serviceTemplates: true
+            }
+        });
 
-    if (error || !vendor) {
+        if (!vendor) return null;
+
+        const serviceCategories = (vendor.serviceCategories || []).map(
+            (cat) => cat.category as VendorCategory
+        );
+        const templates = (vendor.serviceTemplates || []).map(toTemplatePayload);
+
+        return {
+            _id: vendor.id,
+            name: vendor.name,
+            phone: vendor.phone,
+            email: vendor.email,
+            serviceCategories,
+            serviceCategoryLabels: serviceCategories.map((category: VendorCategory) => vendorCategoryLabels[category] || category),
+            status: vendor.status,
+            rating: vendor.rating,
+            notes: vendor.notes,
+            balance: vendor.balance,
+            totalServicesProvided: vendor.totalServicesProvided,
+            serviceTemplates: templates,
+            createdAt: vendor.createdAt.toISOString(),
+        };
+    } catch (error) {
         return null;
     }
-
-    const serviceCategories = (vendor.vendor_service_categories || []).map(
-        (cat: { category: string }) => cat.category as VendorCategory
-    );
-    const templates = (vendor.vendor_service_templates || []).map(toTemplatePayload);
-
-    return {
-        _id: vendor.id,
-        name: vendor.name,
-        phone: vendor.phone,
-        email: vendor.email,
-        serviceCategories,
-        serviceCategoryLabels: serviceCategories.map((category: VendorCategory) => vendorCategoryLabels[category] || category),
-        status: vendor.status,
-        rating: vendor.rating,
-        notes: vendor.notes,
-        balance: vendor.balance,
-        totalServicesProvided: vendor.total_services_provided,
-        serviceTemplates: templates,
-        createdAt: vendor.created_at,
-    };
 }
 
 export async function addVendorServiceTemplate(vendorId: string, data: {
@@ -185,73 +168,50 @@ export async function addVendorServiceTemplate(vendorId: string, data: {
 }) {
     try {
         const name = normalizeText(data.name);
-        if (!name) {
-            return { error: 'Service name is required' };
-        }
+        if (!name) return { error: 'Service name is required' };
 
         const defaultPrice = parseMoney(data.defaultPrice);
         const defaultCost = parseMoney(data.defaultCost);
-        if (defaultPrice === null || defaultCost === null) {
-            return { error: 'Price and cost must be 0 or greater' };
-        }
+        if (defaultPrice === null || defaultCost === null) return { error: 'Price and cost must be 0 or greater' };
 
-        // Check if template exists
-        const { data: existing } = await supabase
-            .from('vendor_service_templates')
-            .select('*')
-            .eq('vendor_id', vendorId)
-            .ilike('name', name)
-            .single();
+        const existing = await prisma.vendorServiceTemplate.findFirst({
+            where: {
+                vendorId,
+                name: { equals: name, mode: 'insensitive' }
+            }
+        });
 
         if (existing) {
-            // Update existing
-            const { error } = await supabase
-                .from('vendor_service_templates')
-                .update({
-                    default_price: defaultPrice,
-                    default_cost: defaultCost,
-                })
-                .eq('id', existing.id);
-
-            if (error) {
-                console.error('Update vendor service template error:', error);
-                return { error: 'Failed to update vendor service template' };
-            }
+            await prisma.vendorServiceTemplate.update({
+                where: { id: existing.id },
+                data: {
+                    defaultPrice,
+                    defaultCost,
+                }
+            });
 
             revalidatePath('/vendors');
             revalidatePath(`/vendors/${vendorId}`);
             revalidatePath('/services');
 
-            return {
-                success: true,
-                updated: true,
-            };
+            return { success: true, updated: true };
         } else {
-            // Create new
-            const { error } = await supabase
-                .from('vendor_service_templates')
-                .insert({
-                    vendor_id: vendorId,
+            await prisma.vendorServiceTemplate.create({
+                data: {
+                    vendorId,
                     name,
-                    service_type: 'other',
+                    serviceType: 'other',
                     category: name,
-                    default_price: defaultPrice,
-                    default_cost: defaultCost,
-                });
-
-            if (error) {
-                console.error('Add vendor service template error:', error);
-                return { error: 'Failed to add vendor service template' };
-            }
+                    defaultPrice,
+                    defaultCost,
+                }
+            });
 
             revalidatePath('/vendors');
             revalidatePath(`/vendors/${vendorId}`);
             revalidatePath('/services');
 
-            return {
-                success: true,
-                updated: false,
-            };
+            return { success: true, updated: false };
         }
     } catch (error) {
         console.error('Add vendor service template error:', error);
@@ -266,39 +226,28 @@ export async function updateVendorServiceTemplatePrice(vendorId: string, data: {
 }) {
     try {
         const name = normalizeText(data.name);
-        if (!name) {
-            return { error: 'Service name is required' };
-        }
+        if (!name) return { error: 'Service name is required' };
 
         const defaultPrice = parseMoney(data.defaultPrice);
         const defaultCost = parseMoney(data.defaultCost);
-        if (defaultPrice === null || defaultCost === null) {
-            return { error: 'Price and cost must be 0 or greater' };
-        }
+        if (defaultPrice === null || defaultCost === null) return { error: 'Price and cost must be 0 or greater' };
 
-        const { data: template } = await supabase
-            .from('vendor_service_templates')
-            .select('*')
-            .eq('vendor_id', vendorId)
-            .ilike('name', name)
-            .single();
+        const template = await prisma.vendorServiceTemplate.findFirst({
+            where: {
+                vendorId,
+                name: { equals: name, mode: 'insensitive' }
+            }
+        });
 
-        if (!template) {
-            return { error: 'Vendor listed service not found' };
-        }
+        if (!template) return { error: 'Vendor listed service not found' };
 
-        const { error } = await supabase
-            .from('vendor_service_templates')
-            .update({
-                default_price: defaultPrice,
-                default_cost: defaultCost,
-            })
-            .eq('id', template.id);
-
-        if (error) {
-            console.error('Update vendor service template price error:', error);
-            return { error: 'Failed to update vendor listed service price' };
-        }
+        await prisma.vendorServiceTemplate.update({
+            where: { id: template.id },
+            data: {
+                defaultPrice,
+                defaultCost,
+            }
+        });
 
         revalidatePath('/vendors');
         revalidatePath(`/vendors/${vendorId}`);
@@ -314,30 +263,20 @@ export async function updateVendorServiceTemplatePrice(vendorId: string, data: {
 export async function deleteVendorServiceTemplate(vendorId: string, templateName: string) {
     try {
         const name = normalizeText(templateName);
-        if (!name) {
-            return { error: 'Service name is required' };
-        }
+        if (!name) return { error: 'Service name is required' };
 
-        const { data: template } = await supabase
-            .from('vendor_service_templates')
-            .select('*')
-            .eq('vendor_id', vendorId)
-            .ilike('name', name)
-            .single();
+        const template = await prisma.vendorServiceTemplate.findFirst({
+            where: {
+                vendorId,
+                name: { equals: name, mode: 'insensitive' }
+            }
+        });
 
-        if (!template) {
-            return { error: 'Vendor listed service not found' };
-        }
+        if (!template) return { error: 'Vendor listed service not found' };
 
-        const { error } = await supabase
-            .from('vendor_service_templates')
-            .delete()
-            .eq('id', template.id);
-
-        if (error) {
-            console.error('Delete vendor service template error:', error);
-            return { error: 'Failed to delete vendor listed service' };
-        }
+        await prisma.vendorServiceTemplate.delete({
+            where: { id: template.id }
+        });
 
         revalidatePath('/vendors');
         revalidatePath(`/vendors/${vendorId}`);
@@ -351,81 +290,76 @@ export async function deleteVendorServiceTemplate(vendorId: string, templateName
 }
 
 export async function getVendorLedger(vendorId: string) {
-    const [payablesResult, servicesResult] = await Promise.all([
-        supabase
-            .from('payables')
-            .select('*')
-            .eq('vendor_id', vendorId)
-            .order('date', { ascending: false }),
-        supabase
-            .from('services')
-            .select('*')
-            .eq('vendor_id', vendorId)
-            .eq('status', 'delivered')
-            .order('delivery_date', { ascending: false }),
-    ]);
+    try {
+        const [payables, deliveredServices] = await Promise.all([
+            prisma.payable.findMany({
+                where: { vendorId },
+                orderBy: { date: 'desc' }
+            }),
+            prisma.service.findMany({
+                where: { vendorId, status: 'delivered' },
+                orderBy: { deliveryDate: 'desc' }
+            }),
+        ]);
 
-    const payables = payablesResult.data || [];
-    const deliveredServices = servicesResult.data || [];
+        const payableRows = payables.map((row) => {
+            const paidAmount = row.paidAmount ?? 0;
+            const dueAmount = Math.max(0, row.amount - paidAmount);
+            return {
+                _id: row.id,
+                date: row.date.toISOString(),
+                dueDate: row.dueDate ? row.dueDate.toISOString() : '',
+                amount: row.amount,
+                paidAmount,
+                dueAmount,
+                status: row.status,
+                description: row.description || '',
+            };
+        });
 
-    const payableRows = payables.map((row) => {
-        const paidAmount = row.paid_amount ?? 0;
-        const dueAmount = Math.max(0, row.amount - paidAmount);
-        return {
+        const deliveredRows = deliveredServices.map((row) => ({
             _id: row.id,
-            date: row.date,
-            dueDate: row.due_date || '',
-            amount: row.amount,
-            paidAmount,
-            dueAmount,
-            status: row.status,
-            description: row.description || '',
+            name: row.name,
+            date: row.deliveryDate ? row.deliveryDate.toISOString() : row.createdAt.toISOString(),
+            price: row.price,
+            cost: row.cost ?? 0,
+            profit: row.profit ?? 0,
+        }));
+
+        return {
+            payables: payableRows,
+            deliveredServices: deliveredRows,
+            totalServiceValue: deliveredRows.reduce((sum: number, row: { price: number }) => sum + row.price, 0),
+            totalVendorCost: deliveredRows.reduce((sum: number, row: { cost: number }) => sum + row.cost, 0),
+            totalPaid: payableRows.reduce((sum: number, row: { paidAmount: number }) => sum + row.paidAmount, 0),
+            totalDue: payableRows.reduce((sum: number, row: { dueAmount: number }) => sum + row.dueAmount, 0),
         };
-    });
-
-    const deliveredRows = deliveredServices.map((row) => ({
-        _id: row.id,
-        name: row.name,
-        date: row.delivery_date || row.created_at,
-        price: row.price,
-        cost: row.cost ?? 0,
-        profit: row.profit ?? 0,
-    }));
-
-    return {
-        payables: payableRows,
-        deliveredServices: deliveredRows,
-        totalServiceValue: deliveredRows.reduce((sum: number, row: { price: number }) => sum + row.price, 0),
-        totalVendorCost: deliveredRows.reduce((sum: number, row: { cost: number }) => sum + row.cost, 0),
-        totalPaid: payableRows.reduce((sum: number, row: { paidAmount: number }) => sum + row.paidAmount, 0),
-        totalDue: payableRows.reduce((sum: number, row: { dueAmount: number }) => sum + row.dueAmount, 0),
-    };
+    } catch (error) {
+        return { payables: [], deliveredServices: [], totalServiceValue: 0, totalVendorCost: 0, totalPaid: 0, totalDue: 0 };
+    }
 }
 
 export async function getVendorTransactionHistory(vendorId: string) {
-    const { data: rows, error } = await supabase
-        .from('transactions')
-        .select(`
-            *,
-            accounts:account_id (name)
-        `)
-        .eq('vendor_id', vendorId)
-        .order('date', { ascending: false });
+    try {
+        const rows = await prisma.transaction.findMany({
+            where: { vendorId },
+            include: { account: { select: { name: true } } },
+            orderBy: { date: 'desc' }
+        });
 
-    if (error) {
+        return rows.map((row) => ({
+            _id: row.id,
+            date: row.date.toISOString(),
+            amount: row.amount,
+            type: row.type,
+            category: row.category,
+            accountName: row.account?.name || 'Unknown Account',
+            description: row.description || '',
+        }));
+    } catch (error) {
         console.error('Error fetching vendor transactions:', error);
         return [];
     }
-
-    return (rows || []).map((row) => ({
-        _id: row.id,
-        date: row.date,
-        amount: row.amount,
-        type: row.type,
-        category: row.category,
-        accountName: row.accounts?.name || 'Unknown Account',
-        description: row.description || '',
-    }));
 }
 
 export async function recordVendorBillPayment(data: {
@@ -437,101 +371,68 @@ export async function recordVendorBillPayment(data: {
 }) {
     try {
         const amount = parsePositiveAmount(data.amount);
-        if (!amount) {
-            return { error: 'Payment amount must be greater than 0' };
-        }
+        if (!amount) return { error: 'Payment amount must be greater than 0' };
 
         const date = normalizeDate(data.date);
-        if (!date) {
-            return { error: 'Invalid payment date' };
-        }
+        if (!date) return { error: 'Invalid payment date' };
 
         const vendorId = normalizeText(data.vendorId);
-        if (!vendorId) {
-            return { error: 'Vendor is required' };
-        }
+        if (!vendorId) return { error: 'Vendor is required' };
 
         const accountId = normalizeText(data.accountId);
-        if (!accountId) {
-            return { error: 'Settlement account is required' };
-        }
+        if (!accountId) return { error: 'Settlement account is required' };
 
-        // Fetch vendor
-        const { data: vendor } = await supabase
-            .from('vendors')
-            .select('*')
-            .eq('id', vendorId)
-            .single();
+        const vendor = await prisma.vendor.findUnique({ where: { id: vendorId } });
+        if (!vendor) return { error: 'Vendor not found', appliedAmount: 0 };
 
-        if (!vendor) {
-            return { error: 'Vendor not found', appliedAmount: 0 };
-        }
-
-        // Fetch account
-        const { data: account } = await supabase
-            .from('accounts')
-            .select('*')
-            .eq('id', accountId)
-            .single();
-
-        if (!account) {
-            return { error: 'Settlement account not found', appliedAmount: 0 };
-        }
+        const account = await prisma.account.findUnique({ where: { id: accountId } });
+        if (!account) return { error: 'Settlement account not found', appliedAmount: 0 };
 
         if ((account.balance ?? 0) < amount) {
             return { error: 'Insufficient account balance for this payment', appliedAmount: 0 };
         }
 
-        // Fetch unpaid payables
-        const { data: payables } = await supabase
-            .from('payables')
-            .select('*')
-            .eq('vendor_id', vendorId)
-            .neq('status', 'paid')
-            .order('due_date', { ascending: true });
+        const payables = await prisma.payable.findMany({
+            where: { vendorId, status: { not: 'paid' } },
+            orderBy: { dueDate: 'asc' }
+        });
 
-        const totalDue = (payables || []).reduce((sum: number, item: { amount: number; paid_amount?: number }) => 
-            sum + Math.max(0, item.amount - (item.paid_amount || 0)), 0);
+        const totalDue = payables.reduce((sum, item) => sum + Math.max(0, item.amount - (item.paidAmount || 0)), 0);
 
-        if (totalDue <= 0) {
-            return { error: 'No due payable entries found for this vendor', appliedAmount: 0 };
-        }
-
-        if (amount > totalDue) {
-            return { error: `Payment exceeds total due (${totalDue.toFixed(2)})`, appliedAmount: 0 };
-        }
+        if (totalDue <= 0) return { error: 'No due payable entries found for this vendor', appliedAmount: 0 };
+        if (amount > totalDue) return { error: `Payment exceeds total due (${totalDue.toFixed(2)})`, appliedAmount: 0 };
 
         let remainingPayment = amount;
         let appliedAmount = 0;
-        const transactions = [];
-        const payableUpdates = [];
+        const transactionsToCreate: any[] = [];
+        const payableUpdates: any[] = [];
 
-        for (const payable of (payables || [])) {
+        for (const payable of payables) {
             if (remainingPayment <= 0) break;
-            const dueAmount = Math.max(0, payable.amount - (payable.paid_amount ?? 0));
+            const dueAmount = Math.max(0, payable.amount - (payable.paidAmount ?? 0));
             if (dueAmount <= 0) continue;
 
             const settled = Math.min(dueAmount, remainingPayment);
-            const nextPaid = (payable.paid_amount ?? 0) + settled;
+            const nextPaid = (payable.paidAmount ?? 0) + settled;
             const newStatus = nextPaid >= payable.amount ? 'paid' : 'partial';
 
             payableUpdates.push({
                 id: payable.id,
-                paid_amount: nextPaid,
+                paidAmount: nextPaid,
                 status: newStatus,
             });
 
-            transactions.push({
-                date: date.toISOString(),
+            transactionsToCreate.push({
+                date,
                 amount: settled,
                 type: 'expense',
                 category: 'Payable Settlement',
-                business_id: payable.business_id || 'travel',
-                account_id: accountId,
-                vendor_id: vendorId,
+                businessId: payable.businessId || 'travel',
+                accountId,
+                vendorId,
                 description: data.note?.trim() || `Vendor bill payment against payable #${payable.id}`,
-                reference_id: payable.id,
-                reference_model: 'Payable',
+                referenceId: payable.id,
+                referenceModel: 'Payable',
             });
 
             remainingPayment -= settled;
@@ -542,35 +443,33 @@ export async function recordVendorBillPayment(data: {
             return { error: 'Could not apply payment to payable entries', appliedAmount: 0 };
         }
 
-        // Update payables
-        for (const update of payableUpdates) {
-            await supabase
-                .from('payables')
-                .update({
-                    paid_amount: update.paid_amount,
-                    status: update.status,
-                })
-                .eq('id', update.id);
-        }
+        await prisma.$transaction(async (tx) => {
+            for (const update of payableUpdates) {
+                await tx.payable.update({
+                    where: { id: update.id },
+                    data: {
+                        paidAmount: update.paidAmount,
+                        status: update.status,
+                    }
+                });
+            }
 
-        // Create transactions
-        if (transactions.length > 0) {
-            await supabase
-                .from('transactions')
-                .insert(transactions);
-        }
+            if (transactionsToCreate.length > 0) {
+                await tx.transaction.createMany({
+                    data: transactionsToCreate
+                });
+            }
 
-        // Update account balance
-        await supabase
-            .from('accounts')
-            .update({ balance: account.balance - appliedAmount })
-            .eq('id', accountId);
+            await tx.account.update({
+                where: { id: accountId },
+                data: { balance: { decrement: appliedAmount } }
+            });
 
-        // Update vendor balance
-        await supabase
-            .from('vendors')
-            .update({ balance: vendor.balance - appliedAmount })
-            .eq('id', vendorId);
+            await tx.vendor.update({
+                where: { id: vendorId },
+                data: { balance: { decrement: appliedAmount } }
+            });
+        });
 
         const ledger = await getVendorLedger(vendorId);
 

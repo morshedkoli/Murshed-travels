@@ -4,7 +4,7 @@ import bcrypt from 'bcryptjs';
 import { revalidatePath } from 'next/cache';
 import { cookies } from 'next/headers';
 import { getSession } from '@/lib/auth';
-import { supabase } from '@/lib/supabase';
+import { prisma } from '@/lib/prisma';
 
 function normalizeEmail(value: string) {
     return value.trim().toLowerCase();
@@ -20,14 +20,15 @@ async function getCurrentAdminUser() {
     const userId = typeof session?.id === 'string' ? session.id : '';
     if (!userId) return null;
 
-    const { data: user, error } = await supabase
-        .from('users')
-        .select('id, email, password, role, created_at, updated_at')
-        .eq('id', userId)
-        .single();
-
-    if (error || !user) return null;
-    return user;
+    try {
+        const user = await prisma.user.findUnique({
+            where: { id: userId },
+            select: { id: true, email: true, password: true, role: true, createdAt: true, updatedAt: true }
+        });
+        return user;
+    } catch (error) {
+        return null;
+    }
 }
 
 export async function getAdminProfile() {
@@ -38,8 +39,8 @@ export async function getAdminProfile() {
         id: user.id,
         email: user.email,
         role: user.role,
-        createdAt: user.created_at,
-        updatedAt: user.updated_at,
+        createdAt: user.createdAt.toISOString(),
+        updatedAt: user.updatedAt.toISOString(),
     };
 }
 
@@ -55,27 +56,19 @@ export async function updateAdminProfile(data: { email: string }) {
         if (!emailPattern.test(email)) return { error: 'Please enter a valid email address' };
 
         if (email !== user.email) {
-            const { data: existingUser } = await supabase
-                .from('users')
-                .select('id')
-                .eq('email', email)
-                .neq('id', user.id)
-                .single();
+            const existingUser = await prisma.user.findUnique({
+                where: { email }
+            });
 
-            if (existingUser) {
+            if (existingUser && existingUser.id !== user.id) {
                 return { error: 'This email is already used by another account' };
             }
         }
 
-        const { error } = await supabase
-            .from('users')
-            .update({ email })
-            .eq('id', user.id);
-
-        if (error) {
-            console.error('Update admin profile error:', error);
-            return { error: 'Failed to update profile' };
-        }
+        await prisma.user.update({
+            where: { id: user.id },
+            data: { email }
+        });
 
         revalidatePath('/profile');
         return { success: true };
@@ -121,15 +114,10 @@ export async function changeAdminPassword(data: {
         }
 
         const hashedPassword = await bcrypt.hash(newPassword, 10);
-        const { error } = await supabase
-            .from('users')
-            .update({ password: hashedPassword })
-            .eq('id', user.id);
-
-        if (error) {
-            console.error('Change admin password error:', error);
-            return { error: 'Failed to change password' };
-        }
+        await prisma.user.update({
+            where: { id: user.id },
+            data: { password: hashedPassword }
+        });
 
         const cookieStore = await cookies();
         cookieStore.delete('session');

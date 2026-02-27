@@ -1,7 +1,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { supabase } from '@/lib/supabase';
+import { prisma } from '@/lib/prisma';
 
 type IncomeInput = {
     date: string;
@@ -35,32 +35,31 @@ function revalidateIncomeViews() {
 }
 
 export async function getIncomeEntries() {
-    const { data: incomes, error } = await supabase
-        .from('transactions')
-        .select(`
-            *,
-            accounts:account_id (name),
-            customers:customer_id (name)
-        `)
-        .eq('type', 'income')
-        .order('date', { ascending: false });
+    try {
+        const incomes = await prisma.transaction.findMany({
+            where: { type: 'income' },
+            include: {
+                account: { select: { name: true } },
+                customer: { select: { name: true } }
+            },
+            orderBy: { date: 'desc' }
+        });
 
-    if (error) {
+        return incomes.map((income) => ({
+            _id: income.id,
+            date: income.date.toISOString(),
+            amount: income.amount,
+            category: income.category,
+            accountId: income.accountId || '',
+            accountName: income.account?.name || 'Unknown Account',
+            customerId: income.customerId || '',
+            customerName: income.customer?.name || '',
+            description: income.description || '',
+        }));
+    } catch (error) {
         console.error('Error fetching income entries:', error);
         return [];
     }
-
-    return (incomes || []).map((income) => ({
-        _id: income.id,
-        date: income.date,
-        amount: income.amount,
-        category: income.category,
-        accountId: income.account_id || '',
-        accountName: income.accounts?.name || 'Unknown Account',
-        customerId: income.customer_id || '',
-        customerName: income.customers?.name || '',
-        description: income.description || '',
-    }));
 }
 
 export async function createIncome(data: IncomeInput) {
@@ -79,54 +78,25 @@ export async function createIncome(data: IncomeInput) {
 
         const customerId = normalizeText(data.customerId);
 
-        // Verify account exists
-        const { data: account } = await supabase
-            .from('accounts')
-            .select('*')
-            .eq('id', accountId)
-            .single();
-
-        if (!account) {
-            return { error: 'Selected account does not exist' };
-        }
-
-        // Verify customer if provided
-        if (customerId) {
-            const { data: customer } = await supabase
-                .from('customers')
-                .select('id')
-                .eq('id', customerId)
-                .single();
-
-            if (!customer) {
-                return { error: 'Selected customer does not exist' };
-            }
-        }
-
-        // Create transaction
-        const { error: transactionError } = await supabase
-            .from('transactions')
-            .insert({
-                date: date.toISOString(),
-                amount,
-                type: 'income',
-                category,
-                business_id: 'travel',
-                account_id: accountId,
-                customer_id: customerId || null,
-                description: normalizeText(data.description) || null,
+        await prisma.$transaction(async (tx) => {
+            await tx.transaction.create({
+                data: {
+                    date,
+                    amount,
+                    type: 'income',
+                    category,
+                    businessId: 'travel',
+                    accountId,
+                    customerId: customerId || null,
+                    description: normalizeText(data.description) || null,
+                }
             });
 
-        if (transactionError) {
-            console.error('Create transaction error:', transactionError);
-            return { error: 'Failed to create income record' };
-        }
-
-        // Update account balance
-        await supabase
-            .from('accounts')
-            .update({ balance: account.balance + amount })
-            .eq('id', accountId);
+            await tx.account.update({
+                where: { id: accountId },
+                data: { balance: { increment: amount } }
+            });
+        });
 
         revalidateIncomeViews();
         return { success: true };
@@ -152,94 +122,48 @@ export async function updateIncome(id: string, data: IncomeInput) {
 
         const customerId = normalizeText(data.customerId);
 
-        // Fetch existing income
-        const { data: income } = await supabase
-            .from('transactions')
-            .select('*')
-            .eq('id', id)
-            .eq('type', 'income')
-            .single();
+        const oldIncome = await prisma.transaction.findUnique({
+            where: { id, type: 'income' }
+        });
 
-        if (!income) {
-            return { error: 'Income record not found' };
-        }
+        if (!oldIncome) return { error: 'Income record not found' };
 
-        // Verify account exists
-        const { data: account } = await supabase
-            .from('accounts')
-            .select('*')
-            .eq('id', accountId)
-            .single();
+        await prisma.$transaction(async (tx) => {
+            const oldAccountId = oldIncome.accountId;
+            const oldAmount = oldIncome.amount;
 
-        if (!account) {
-            return { error: 'Selected account does not exist' };
-        }
-
-        // Verify customer if provided
-        if (customerId) {
-            const { data: customer } = await supabase
-                .from('customers')
-                .select('id')
-                .eq('id', customerId)
-                .single();
-
-            if (!customer) {
-                return { error: 'Selected customer does not exist' };
-            }
-        }
-
-        const oldAccountId = income.account_id;
-        const oldAmount = income.amount;
-
-        // Handle account balance updates
-        if (oldAccountId === accountId) {
-            const delta = amount - oldAmount;
-            if (delta !== 0) {
-                await supabase
-                    .from('accounts')
-                    .update({ balance: account.balance + delta })
-                    .eq('id', accountId);
-            }
-        } else {
-            // Restore old account balance
-            const { data: oldAccount } = await supabase
-                .from('accounts')
-                .select('*')
-                .eq('id', oldAccountId)
-                .single();
-
-            if (oldAccount) {
-                await supabase
-                    .from('accounts')
-                    .update({ balance: oldAccount.balance - oldAmount })
-                    .eq('id', oldAccountId);
+            if (oldAccountId === accountId) {
+                const delta = amount - oldAmount;
+                if (delta !== 0) {
+                    await tx.account.update({
+                        where: { id: accountId },
+                        data: { balance: { increment: delta } }
+                    });
+                }
+            } else {
+                await tx.account.update({
+                    where: { id: oldAccountId },
+                    data: { balance: { decrement: oldAmount } }
+                });
+                await tx.account.update({
+                    where: { id: accountId },
+                    data: { balance: { increment: amount } }
+                });
             }
 
-            // Update new account balance
-            await supabase
-                .from('accounts')
-                .update({ balance: account.balance + amount })
-                .eq('id', accountId);
-        }
-
-        // Update transaction
-        const { error } = await supabase
-            .from('transactions')
-            .update({
-                date: date.toISOString(),
-                amount,
-                category,
-                business_id: 'travel',
-                account_id: accountId,
-                customer_id: customerId || null,
-                description: normalizeText(data.description) || null,
-            })
-            .eq('id', id);
-
-        if (error) {
-            console.error('Update transaction error:', error);
-            return { error: 'Failed to update income record' };
-        }
+            await tx.transaction.update({
+                where: { id },
+                data: {
+                    date,
+                    amount,
+                    category,
+                    businessId: 'travel',
+                    accountId,
+                    customerId: customerId || null,
+                    description: normalizeText(data.description) || null,
+                }
+            });
+        });
 
         revalidateIncomeViews();
         return { success: true };
@@ -251,37 +175,22 @@ export async function updateIncome(id: string, data: IncomeInput) {
 
 export async function deleteIncome(id: string) {
     try {
-        // Fetch existing income
-        const { data: income } = await supabase
-            .from('transactions')
-            .select('*')
-            .eq('id', id)
-            .eq('type', 'income')
-            .single();
+        const income = await prisma.transaction.findUnique({
+            where: { id, type: 'income' }
+        });
 
-        if (!income) {
-            return { error: 'Income record not found' };
-        }
+        if (!income) return { error: 'Income record not found' };
 
-        // Update account balance
-        const { data: account } = await supabase
-            .from('accounts')
-            .select('*')
-            .eq('id', income.account_id)
-            .single();
+        await prisma.$transaction(async (tx) => {
+            await tx.account.update({
+                where: { id: income.accountId },
+                data: { balance: { decrement: income.amount } }
+            });
 
-        if (account) {
-            await supabase
-                .from('accounts')
-                .update({ balance: account.balance - income.amount })
-                .eq('id', income.account_id);
-        }
-
-        // Delete transaction
-        await supabase
-            .from('transactions')
-            .delete()
-            .eq('id', id);
+            await tx.transaction.delete({
+                where: { id }
+            });
+        });
 
         revalidateIncomeViews();
         return { success: true };

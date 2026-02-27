@@ -1,0 +1,86 @@
+﻿src/actions/customers.ts(256,15): error TS7034: Variable 'transactionsToCreate' implicitly has type 'any[]' in some locations where its type cannot be determined.
+src/actions/customers.ts(357,27): error TS7005: Variable 'transactionsToCreate' implicitly has an 'any[]' type.
+src/actions/vendors.ts(407,15): error TS7034: Variable 'transactionsToCreate' implicitly has type 'any[]' in some locations where its type cannot be determined.
+src/actions/vendors.ts(408,15): error TS7034: Variable 'payableUpdates' implicitly has type 'any[]' in some locations where its type cannot be determined.
+src/actions/vendors.ts(447,34): error TS7005: Variable 'payableUpdates' implicitly has an 'any[]' type.
+src/actions/vendors.ts(459,27): error TS7005: Variable 'transactionsToCreate' implicitly has an 'any[]' type.
+src/app/(dashboard)/customers/[id]/page.tsx(27,13): error TS2322: Type '{ _id: string; name: string; phone: string; email: string | null; address: string | null; passportNumber: string | null; nationality: string | null; balance: number; createdAt: string; }' is not assignable to type 'CustomerProfile'.
+  Types of property 'email' are incompatible.
+    Type 'string | null' is not assignable to type 'string | undefined'.
+      Type 'null' is not assignable to type 'string | undefined'.
+src/app/(dashboard)/customers/[id]/page.tsx(28,13): error TS2322: Type '{ _id: string; name: string; category: string; serviceType: string; price: number; cost: number; profit: number; status: string; vendorId: string; vendorName: string; deliveryDate: string; createdAt: string; }[]' is not assignable to type 'CustomerServiceRow[]'.
+  Type '{ _id: string; name: string; category: string; serviceType: string; price: number; cost: number; profit: number; status: string; vendorId: string; vendorName: string; deliveryDate: string; createdAt: string; }' is not assignable to type 'CustomerServiceRow'.
+    Types of property 'status' are incompatible.
+      Type 'string' is not assignable to type '"delivered" | "pending" | "in-progress" | "ready" | "cancelled"'.
+src/app/(dashboard)/customers/[id]/page.tsx(31,13): error TS2322: Type '{ _id: string; date: string; amount: number; type: string; category: string; accountName: string; description: string; }[]' is not assignable to type '{ _id: string; date: string; amount: number; type: "income" | "expense"; category: string; accountName: string; description: string; }[]'.
+  Type '{ _id: string; date: string; amount: number; type: string; category: string; accountName: string; description: string; }' is not assignable to type '{ _id: string; date: string; amount: number; type: "income" | "expense"; category: string; accountName: string; description: string; }'.
+    Types of property 'type' are incompatible.
+      Type 'string' is not assignable to type '"income" | "expense"'.
+src/app/(dashboard)/payable/page.tsx(40,7): error TS2322: Type '{ _id: string; date: string; dueDate: string; amount: number; paidAmount: number; remainingAmount: number; businessId: BusinessType; vendorId: string; vendorName: string; status: string; description: string; }[]' is not assignable to type 'PayableRow[]'.
+  Type '{ _id: string; date: string; dueDate: string; amount: number; paidAmount: number; remainingAmount: number; businessId: BusinessType; vendorId: string; vendorName: string; status: string; description: string; }' is not assignable to type 'PayableRow'.
+    Types of property 'status' are incompatible.
+      Type 'string' is not assignable to type 'PayableStatus'.
+src/app/(dashboard)/receivable/page.tsx(40,7): error TS2322: Type '{ _id: string; date: string; dueDate: string; amount: number; paidAmount: number; remainingAmount: number; businessId: BusinessType; customerId: string; customerName: string; status: string; description: string; }[]' is not assignable to type 'ReceivableRow[]'.
+  Type '{ _id: string; date: string; dueDate: string; amount: number; paidAmount: number; remainingAmount: number; businessId: BusinessType; customerId: string; customerName: string; status: string; description: string; }' is not assignable to type 'ReceivableRow'.
+    Types of property 'status' are incompatible.
+      Type 'string' is not assignable to type 'ReceivableStatus'.
+src/app/(dashboard)/services/page.tsx(20,13): error TS2322: Type '{ _id: string; name: string; description: string; category: string; serviceType: string; price: number; cost: number; profit: number; status: string; customerId: string; customerName: string; customerPhone: string; vendorId: string; vendorName: string; deliveryDate: string; createdAt: string; }[]' is not assignable to type 'ServiceRow[]'.
+  Type '{ _id: string; name: string; description: string; category: string; serviceType: string; price: number; cost: number; profit: number; status: string; customerId: string; customerName: string; customerPhone: string; vendorId: string; vendorName: string; deliveryDate: string; createdAt: string; }' is not assignable to type 'ServiceRow'.
+    Types of property 'serviceType' are incompatible.
+      Type 'string' is not assignable to type '"other" | "visa" | "air_ticket" | "medical" | "taqamul" | "hotel" | "package"'.
+src/app/(dashboard)/services/page.tsx(22,13): error TS2322: Type '{ _id: string; name: string; serviceTemplates: { _id: string; name: string; serviceType: string; category: string; defaultPrice: number; defaultCost: number; }[]; }[]' is not assignable to type 'VendorOption[]'.
+  Type '{ _id: string; name: string; serviceTemplates: { _id: string; name: string; serviceType: string; category: string; defaultPrice: number; defaultCost: number; }[]; }' is not assignable to type 'VendorOption'.
+    Type '{ _id: string; name: string; serviceTemplates: { _id: string; name: string; serviceType: string; category: string; defaultPrice: number; defaultCost: number; }[]; }' is not assignable to type '{ serviceTemplates?: VendorTemplateOption[] | undefined; }'.
+      Types of property 'serviceTemplates' are incompatible.
+        Type '{ _id: string; name: string; serviceType: string; category: string; defaultPrice: number; defaultCost: number; }[]' is not assignable to type 'VendorTemplateOption[]'.
+          Type '{ _id: string; name: string; serviceType: string; category: string; defaultPrice: number; defaultCost: number; }' is not assignable to type 'VendorTemplateOption'.
+            Types of property 'serviceType' are incompatible.
+              Type 'string' is not assignable to type '"other" | "visa" | "air_ticket" | "medical" | "taqamul" | "hotel" | "package"'.
+src/app/(dashboard)/vendors/[id]/page.tsx(28,13): error TS2322: Type '{ _id: string; name: string; phone: string | null; email: string | null; serviceCategories: VendorCategory[]; serviceCategoryLabels: string[]; status: string; rating: number | null; ... 4 more ...; createdAt: string; }' is not assignable to type 'VendorProfile'.
+  Types of property 'phone' are incompatible.
+    Type 'string | null' is not assignable to type 'string | undefined'.
+      Type 'null' is not assignable to type 'string | undefined'.
+src/app/(dashboard)/vendors/[id]/page.tsx(29,13): error TS2322: Type '{ _id: string; name: string; category: string; serviceType: string; price: number; cost: number; profit: number; status: string; customerId: string; customerName: string; customerPhone: string; deliveryDate: string; createdAt: string; }[]' is not assignable to type 'VendorServiceRow[]'.
+  Type '{ _id: string; name: string; category: string; serviceType: string; price: number; cost: number; profit: number; status: string; customerId: string; customerName: string; customerPhone: string; deliveryDate: string; createdAt: string; }' is not assignable to type 'VendorServiceRow'.
+    Types of property 'status' are incompatible.
+      Type 'string' is not assignable to type '"delivered" | "pending" | "in-progress" | "ready" | "cancelled"'.
+src/app/(dashboard)/vendors/[id]/page.tsx(30,13): error TS2322: Type '{ payables: { _id: string; date: string; dueDate: string; amount: number; paidAmount: number; dueAmount: number; status: string; description: string; }[]; deliveredServices: { _id: string; name: string; date: string; price: number; cost: number; profit: number; }[]; totalServiceValue: number; totalVendorCost: number...' is not assignable to type 'VendorLedger'.
+  Types of property 'payables' are incompatible.
+    Type '{ _id: string; date: string; dueDate: string; amount: number; paidAmount: number; dueAmount: number; status: string; description: string; }[]' is not assignable to type '{ _id: string; date: string; amount: number; paidAmount: number; dueAmount: number; status: "paid" | "partial" | "unpaid"; description: string; }[]'.
+      Type '{ _id: string; date: string; dueDate: string; amount: number; paidAmount: number; dueAmount: number; status: string; description: string; }' is not assignable to type '{ _id: string; date: string; amount: number; paidAmount: number; dueAmount: number; status: "paid" | "partial" | "unpaid"; description: string; }'.
+        Types of property 'status' are incompatible.
+          Type 'string' is not assignable to type '"paid" | "partial" | "unpaid"'.
+src/app/(dashboard)/vendors/[id]/page.tsx(32,13): error TS2322: Type '{ _id: string; date: string; amount: number; type: string; category: string; accountName: string; description: string; }[]' is not assignable to type '{ _id: string; date: string; amount: number; type: "income" | "expense"; category: string; accountName: string; description: string; }[]'.
+  Type '{ _id: string; date: string; amount: number; type: string; category: string; accountName: string; description: string; }' is not assignable to type '{ _id: string; date: string; amount: number; type: "income" | "expense"; category: string; accountName: string; description: string; }'.
+    Types of property 'type' are incompatible.
+      Type 'string' is not assignable to type '"income" | "expense"'.
+src/components/expense/expense-manager.tsx(180,21): error TS2345: Argument of type '{ _id: string; date: string; amount: number; category: string; businessId: string; accountId: string; accountName: string; vendorId: string; vendorName: string; description: string; }[]' is not assignable to parameter of type 'SetStateAction<ExpenseRow[]>'.
+  Type '{ _id: string; date: string; amount: number; category: string; businessId: string; accountId: string; accountName: string; vendorId: string; vendorName: string; description: string; }[]' is not assignable to type 'ExpenseRow[]'.
+    Type '{ _id: string; date: string; amount: number; category: string; businessId: string; accountId: string; accountName: string; vendorId: string; vendorName: string; description: string; }' is not assignable to type 'ExpenseRow'.
+      Types of property 'businessId' are incompatible.
+        Type 'string' is not assignable to type '"travel" | "isp"'.
+src/components/payable/payable-manager.tsx(183,21): error TS2345: Argument of type '{ _id: string; date: string; dueDate: string; amount: number; paidAmount: number; remainingAmount: number; businessId: BusinessType; vendorId: string; vendorName: string; status: string; description: string; }[]' is not assignable to parameter of type 'SetStateAction<PayableRow[]>'.
+  Type '{ _id: string; date: string; dueDate: string; amount: number; paidAmount: number; remainingAmount: number; businessId: BusinessType; vendorId: string; vendorName: string; status: string; description: string; }[]' is not assignable to type 'PayableRow[]'.
+    Type '{ _id: string; date: string; dueDate: string; amount: number; paidAmount: number; remainingAmount: number; businessId: BusinessType; vendorId: string; vendorName: string; status: string; description: string; }' is not assignable to type 'PayableRow'.
+      Types of property 'status' are incompatible.
+        Type 'string' is not assignable to type 'PayableStatus'.
+src/components/receivable/receivable-manager.tsx(193,21): error TS2345: Argument of type '{ _id: string; date: string; dueDate: string; amount: number; paidAmount: number; remainingAmount: number; businessId: BusinessType; customerId: string; customerName: string; status: string; description: string; }[]' is not assignable to parameter of type 'SetStateAction<ReceivableRow[]>'.
+  Type '{ _id: string; date: string; dueDate: string; amount: number; paidAmount: number; remainingAmount: number; businessId: BusinessType; customerId: string; customerName: string; status: string; description: string; }[]' is not assignable to type 'ReceivableRow[]'.
+    Type '{ _id: string; date: string; dueDate: string; amount: number; paidAmount: number; remainingAmount: number; businessId: BusinessType; customerId: string; customerName: string; status: string; description: string; }' is not assignable to type 'ReceivableRow'.
+      Types of property 'status' are incompatible.
+        Type 'string' is not assignable to type 'ReceivableStatus'.
+src/components/receivable/receivable-manager.tsx(292,17): error TS2345: Argument of type '{ _id: string; date: string; dueDate: string; amount: number; paidAmount: number; remainingAmount: number; businessId: BusinessType; customerId: string; customerName: string; status: string; description: string; }[]' is not assignable to parameter of type 'SetStateAction<ReceivableRow[]>'.
+  Type '{ _id: string; date: string; dueDate: string; amount: number; paidAmount: number; remainingAmount: number; businessId: BusinessType; customerId: string; customerName: string; status: string; description: string; }[]' is not assignable to type 'ReceivableRow[]'.
+    Type '{ _id: string; date: string; dueDate: string; amount: number; paidAmount: number; remainingAmount: number; businessId: BusinessType; customerId: string; customerName: string; status: string; description: string; }' is not assignable to type 'ReceivableRow'.
+      Types of property 'status' are incompatible.
+        Type 'string' is not assignable to type 'ReceivableStatus'.
+src/components/services/service-manager.tsx(386,21): error TS2345: Argument of type '{ _id: string; name: string; description: string; category: string; serviceType: string; price: number; cost: number; profit: number; status: string; customerId: string; customerName: string; customerPhone: string; vendorId: string; vendorName: string; deliveryDate: string; createdAt: string; }[]' is not assignable to parameter of type 'SetStateAction<ServiceRow[]>'.
+  Type '{ _id: string; name: string; description: string; category: string; serviceType: string; price: number; cost: number; profit: number; status: string; customerId: string; customerName: string; customerPhone: string; vendorId: string; vendorName: string; deliveryDate: string; createdAt: string; }[]' is not assignable to type 'ServiceRow[]'.
+    Type '{ _id: string; name: string; description: string; category: string; serviceType: string; price: number; cost: number; profit: number; status: string; customerId: string; customerName: string; customerPhone: string; vendorId: string; vendorName: string; deliveryDate: string; createdAt: string; }' is not assignable to type 'ServiceRow'.
+      Types of property 'serviceType' are incompatible.
+        Type 'string' is not assignable to type '"other" | "visa" | "air_ticket" | "medical" | "taqamul" | "hotel" | "package"'.
+src/components/services/service-manager.tsx(416,21): error TS2345: Argument of type '{ _id: string; name: string; description: string; category: string; serviceType: string; price: number; cost: number; profit: number; status: string; customerId: string; customerName: string; customerPhone: string; vendorId: string; vendorName: string; deliveryDate: string; createdAt: string; }[]' is not assignable to parameter of type 'SetStateAction<ServiceRow[]>'.
+  Type '{ _id: string; name: string; description: string; category: string; serviceType: string; price: number; cost: number; profit: number; status: string; customerId: string; customerName: string; customerPhone: string; vendorId: string; vendorName: string; deliveryDate: string; createdAt: string; }[]' is not assignable to type 'ServiceRow[]'.
+    Type '{ _id: string; name: string; description: string; category: string; serviceType: string; price: number; cost: number; profit: number; status: string; customerId: string; customerName: string; customerPhone: string; vendorId: string; vendorName: string; deliveryDate: string; createdAt: string; }' is not assignable to type 'ServiceRow'.
+      Types of property 'serviceType' are incompatible.
+        Type 'string' is not assignable to type '"other" | "visa" | "air_ticket" | "medical" | "taqamul" | "hotel" | "package"'.

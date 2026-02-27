@@ -1,6 +1,6 @@
 'use server';
 
-import { supabase } from '@/lib/supabase';
+import { prisma } from '@/lib/prisma';
 
 type SearchResult = {
   id: string;
@@ -24,42 +24,52 @@ export async function searchContacts(rawQuery: string): Promise<SearchResult[]> 
   const query = rawQuery.trim();
   if (query.length < 2) return [];
 
-  const searchPattern = `%${query}%`;
+  try {
+    const [customers, vendors] = await Promise.all([
+      prisma.customer.findMany({
+        where: {
+          OR: [
+            { name: { contains: query, mode: 'insensitive' } },
+            { phone: { contains: query, mode: 'insensitive' } }
+          ]
+        },
+        select: { id: true, name: true, phone: true },
+        take: 6
+      }),
+      prisma.vendor.findMany({
+        where: {
+          OR: [
+            { name: { contains: query, mode: 'insensitive' } },
+            { phone: { contains: query, mode: 'insensitive' } }
+          ]
+        },
+        select: { id: true, name: true, phone: true },
+        take: 6
+      })
+    ]);
 
-  const [customersResult, vendorsResult] = await Promise.all([
-    supabase
-      .from('customers')
-      .select('id, name, phone')
-      .or(`name.ilike.${searchPattern},phone.ilike.${searchPattern}`)
-      .limit(6),
-    supabase
-      .from('vendors')
-      .select('id, name, phone')
-      .or(`name.ilike.${searchPattern},phone.ilike.${searchPattern}`)
-      .limit(6),
-  ]);
+    const results: SearchResult[] = [
+      ...customers.map((item) => ({
+        id: item.id,
+        type: 'user' as const,
+        name: item.name,
+        phone: item.phone || '-',
+        href: '/customers' as const,
+      })),
+      ...vendors.map((item) => ({
+        id: item.id,
+        type: 'vendor' as const,
+        name: item.name,
+        phone: item.phone || '-',
+        href: '/vendors' as const,
+      })),
+    ];
 
-  const customers = customersResult.data || [];
-  const vendors = vendorsResult.data || [];
+    results.sort((a, b) => scoreMatch(query, b.name, b.phone) - scoreMatch(query, a.name, a.phone));
 
-  const results: SearchResult[] = [
-    ...customers.map((item) => ({
-      id: item.id,
-      type: 'user' as const,
-      name: item.name,
-      phone: item.phone || '-',
-      href: '/customers' as const,
-    })),
-    ...vendors.map((item) => ({
-      id: item.id,
-      type: 'vendor' as const,
-      name: item.name,
-      phone: item.phone || '-',
-      href: '/vendors' as const,
-    })),
-  ];
-
-  results.sort((a, b) => scoreMatch(query, b.name, b.phone) - scoreMatch(query, a.name, a.phone));
-
-  return results.slice(0, 8);
+    return results.slice(0, 8);
+  } catch (err) {
+    console.error(err);
+    return [];
+  }
 }

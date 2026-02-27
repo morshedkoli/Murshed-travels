@@ -1,7 +1,7 @@
 'use server';
 
 import { unstable_noStore as noStore } from 'next/cache';
-import { supabase } from '@/lib/supabase';
+import { prisma } from '@/lib/prisma';
 
 type BusinessFilter = 'all' | 'travel' | 'isp';
 type TrendWindow = '6m' | '12m';
@@ -126,28 +126,29 @@ export async function getReportSnapshot(filters: ReportFilters = {}): Promise<Re
     const businessId = normalizeBusiness(filters.businessId);
     const trendWindow = normalizeTrendWindow(filters.trendWindow);
 
-    const fromDateStr = fromDate.toISOString();
-    const toDateStr = toDate.toISOString();
-
     try {
-        // Fetch transactions with filters
-        let transactionsQuery = supabase
-            .from('transactions')
-            .select('*')
-            .gte('date', fromDateStr)
-            .lte('date', toDateStr);
+        const transactionWhere: any = {
+            date: {
+                gte: fromDate,
+                lte: toDate
+            }
+        };
 
         if (businessId !== 'all') {
             if (businessId === 'travel') {
-                transactionsQuery = transactionsQuery.or('business_id.eq.travel,business_id.is.null');
+                transactionWhere.OR = [
+                    { businessId: 'travel' },
+                    { businessId: null }
+                ];
             } else {
-                transactionsQuery = transactionsQuery.eq('business_id', businessId);
+                transactionWhere.businessId = businessId;
             }
         }
 
-        const { data: transactions } = await transactionsQuery;
+        const transactions = await prisma.transaction.findMany({
+            where: transactionWhere
+        });
 
-        // Calculate overview
         let totalIncome = 0;
         let totalExpense = 0;
         const categoryMap = new Map<string, { type: 'income' | 'expense'; amount: number; count: number }>();
@@ -156,9 +157,9 @@ export async function getReportSnapshot(filters: ReportFilters = {}): Promise<Re
         businessMap.set('travel', { income: 0, expense: 0, count: 0 });
         businessMap.set('isp', { income: 0, expense: 0, count: 0 });
 
-        for (const t of (transactions || [])) {
-            const effectiveBusiness = t.business_id || 'travel';
-            
+        for (const t of transactions) {
+            const effectiveBusiness = t.businessId || 'travel';
+
             if (t.type === 'income') {
                 totalIncome += t.amount || 0;
                 const current = businessMap.get(effectiveBusiness as 'travel' | 'isp');
@@ -175,7 +176,6 @@ export async function getReportSnapshot(filters: ReportFilters = {}): Promise<Re
                 }
             }
 
-            // Category aggregation
             const key = `${t.type}-${t.category}`;
             const existing = categoryMap.get(key);
             if (existing) {
@@ -190,7 +190,6 @@ export async function getReportSnapshot(filters: ReportFilters = {}): Promise<Re
             }
         }
 
-        // Format categories
         const incomeCategories: Array<{ category: string; amount: number; count: number }> = [];
         const expenseCategories: Array<{ category: string; amount: number; count: number }> = [];
 
@@ -206,17 +205,16 @@ export async function getReportSnapshot(filters: ReportFilters = {}): Promise<Re
         incomeCategories.sort((a, b) => b.amount - a.amount);
         expenseCategories.sort((a, b) => b.amount - a.amount);
 
-        // Monthly trend
         const trendMonths = trendWindow === '12m' ? 12 : 6;
         const trendStart = new Date(toDate.getFullYear(), toDate.getMonth() - (trendMonths - 1), 1);
         const trendMap = new Map<string, { income: number; expense: number }>();
-        
+
         for (let index = 0; index < trendMonths; index += 1) {
             const pointDate = new Date(trendStart.getFullYear(), trendStart.getMonth() + index, 1);
             trendMap.set(monthKey(pointDate), { income: 0, expense: 0 });
         }
 
-        for (const t of (transactions || [])) {
+        for (const t of transactions) {
             const date = new Date(t.date);
             const key = monthKey(date);
             const current = trendMap.get(key);
@@ -240,52 +238,35 @@ export async function getReportSnapshot(filters: ReportFilters = {}): Promise<Re
             };
         });
 
-        // Aging calculations
         const receivableAging = {
-            bucket0To30: 0,
-            bucket0To30Count: 0,
-            bucket31To60: 0,
-            bucket31To60Count: 0,
-            bucket61Plus: 0,
-            bucket61PlusCount: 0,
-            total: 0,
-            totalCount: 0,
+            bucket0To30: 0, bucket0To30Count: 0,
+            bucket31To60: 0, bucket31To60Count: 0,
+            bucket61Plus: 0, bucket61PlusCount: 0,
+            total: 0, totalCount: 0,
         };
         const payableAging = {
-            bucket0To30: 0,
-            bucket0To30Count: 0,
-            bucket31To60: 0,
-            bucket31To60Count: 0,
-            bucket61Plus: 0,
-            bucket61PlusCount: 0,
-            total: 0,
-            totalCount: 0,
+            bucket0To30: 0, bucket0To30Count: 0,
+            bucket31To60: 0, bucket31To60Count: 0,
+            bucket61Plus: 0, bucket61PlusCount: 0,
+            total: 0, totalCount: 0,
         };
 
-        // Fetch aging data
-        let receivablesQuery = supabase
-            .from('receivables')
-            .select('*')
-            .in('status', ['unpaid', 'partial']);
-
-        let payablesQuery = supabase
-            .from('payables')
-            .select('*')
-            .in('status', ['unpaid', 'partial']);
+        const receivableWhere: any = { status: { in: ['unpaid', 'partial'] } };
+        const payableWhere: any = { status: { in: ['unpaid', 'partial'] } };
 
         if (businessId !== 'all') {
             if (businessId === 'travel') {
-                receivablesQuery = receivablesQuery.or('business_id.eq.travel,business_id.is.null');
-                payablesQuery = payablesQuery.or('business_id.eq.travel,business_id.is.null');
+                receivableWhere.OR = [{ businessId: 'travel' }, { businessId: null }];
+                payableWhere.OR = [{ businessId: 'travel' }, { businessId: null }];
             } else {
-                receivablesQuery = receivablesQuery.eq('business_id', businessId);
-                payablesQuery = payablesQuery.eq('business_id', businessId);
+                receivableWhere.businessId = businessId;
+                payableWhere.businessId = businessId;
             }
         }
 
-        const [{ data: receivables }, { data: payables }] = await Promise.all([
-            receivablesQuery,
-            payablesQuery,
+        const [receivables, payables] = await Promise.all([
+            prisma.receivable.findMany({ where: receivableWhere }),
+            prisma.payable.findMany({ where: payableWhere }),
         ]);
 
         function bucketize(target: typeof receivableAging, dueDate: Date, amount: number) {
@@ -308,31 +289,28 @@ export async function getReportSnapshot(filters: ReportFilters = {}): Promise<Re
             target.totalCount += 1;
         }
 
-        for (const row of (receivables || [])) {
-            const amount = Math.max(0, (row.amount || 0) - (row.paid_amount || 0));
-            const due = row.due_date ? new Date(row.due_date) : new Date(row.date);
+        for (const row of receivables) {
+            const amount = Math.max(0, (row.amount || 0) - (row.paidAmount || 0));
+            const due = row.dueDate ? new Date(row.dueDate) : new Date(row.date);
             bucketize(receivableAging, due, amount);
         }
 
-        for (const row of (payables || [])) {
-            const amount = Math.max(0, (row.amount || 0) - (row.paid_amount || 0));
-            const due = row.due_date ? new Date(row.due_date) : new Date(row.date);
+        for (const row of payables) {
+            const amount = Math.max(0, (row.amount || 0) - (row.paidAmount || 0));
+            const due = row.dueDate ? new Date(row.dueDate) : new Date(row.date);
             bucketize(payableAging, due, amount);
         }
 
-        // Recent transactions
-        const { data: recent } = await supabase
-            .from('transactions')
-            .select(`
-                *,
-                accounts:account_id (name),
-                customers:customer_id (name),
-                vendors:vendor_id (name)
-            `)
-            .gte('date', fromDateStr)
-            .lte('date', toDateStr)
-            .order('date', { ascending: false })
-            .limit(12);
+        const recent = await prisma.transaction.findMany({
+            where: transactionWhere,
+            include: {
+                account: { select: { name: true } },
+                customer: { select: { name: true } },
+                vendor: { select: { name: true } }
+            },
+            orderBy: { date: 'desc' },
+            take: 12
+        });
 
         return {
             filters: {
@@ -363,15 +341,15 @@ export async function getReportSnapshot(filters: ReportFilters = {}): Promise<Re
                 receivable: receivableAging,
                 payable: payableAging,
             },
-            recentTransactions: (recent || []).map((entry) => ({
+            recentTransactions: recent.map((entry) => ({
                 _id: entry.id,
-                date: entry.date,
-                type: entry.type,
+                date: entry.date.toISOString(),
+                type: entry.type as 'income' | 'expense',
                 category: entry.category,
-                businessId: entry.business_id || 'travel',
+                businessId: (entry.businessId as 'travel' | 'isp') || 'travel',
                 amount: entry.amount,
-                accountName: entry.accounts?.name || 'Unknown Account',
-                partyName: entry.customers?.name || entry.vendors?.name || '-',
+                accountName: entry.account?.name || 'Unknown Account',
+                partyName: entry.customer?.name || entry.vendor?.name || '-',
                 description: entry.description || '',
             })),
         };
@@ -398,24 +376,16 @@ export async function getReportSnapshot(filters: ReportFilters = {}): Promise<Re
             monthlyTrend: [],
             aging: {
                 receivable: {
-                    bucket0To30: 0,
-                    bucket0To30Count: 0,
-                    bucket31To60: 0,
-                    bucket31To60Count: 0,
-                    bucket61Plus: 0,
-                    bucket61PlusCount: 0,
-                    total: 0,
-                    totalCount: 0,
+                    bucket0To30: 0, bucket0To30Count: 0,
+                    bucket31To60: 0, bucket31To60Count: 0,
+                    bucket61Plus: 0, bucket61PlusCount: 0,
+                    total: 0, totalCount: 0,
                 },
                 payable: {
-                    bucket0To30: 0,
-                    bucket0To30Count: 0,
-                    bucket31To60: 0,
-                    bucket31To60Count: 0,
-                    bucket61Plus: 0,
-                    bucket61PlusCount: 0,
-                    total: 0,
-                    totalCount: 0,
+                    bucket0To30: 0, bucket0To30Count: 0,
+                    bucket31To60: 0, bucket31To60Count: 0,
+                    bucket61Plus: 0, bucket61PlusCount: 0,
+                    total: 0, totalCount: 0,
                 },
             },
             recentTransactions: [],

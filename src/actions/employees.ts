@@ -1,7 +1,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { supabase } from '@/lib/supabase';
+import { prisma } from '@/lib/prisma';
 
 type BusinessType = 'travel' | 'isp';
 
@@ -34,26 +34,25 @@ function revalidateEmployeeViews() {
 }
 
 export async function getEmployees() {
-    const { data: employees, error } = await supabase
-        .from('employees')
-        .select('*')
-        .order('created_at', { ascending: false });
+    try {
+        const employees = await prisma.employee.findMany({
+            orderBy: { createdAt: 'desc' }
+        });
 
-    if (error) {
+        return employees.map((employee) => ({
+            _id: employee.id,
+            name: employee.name,
+            role: employee.role,
+            phone: employee.phone,
+            baseSalary: employee.baseSalary,
+            active: employee.active,
+            businessId: (employee.businessId as BusinessType) || 'travel',
+            createdAt: employee.createdAt.toISOString(),
+        }));
+    } catch (error) {
         console.error('Error fetching employees:', error);
         return [];
     }
-
-    return (employees || []).map((employee) => ({
-        _id: employee.id,
-        name: employee.name,
-        role: employee.role,
-        phone: employee.phone,
-        baseSalary: employee.base_salary,
-        active: employee.active,
-        businessId: (employee.business_id as BusinessType) || 'travel',
-        createdAt: employee.created_at,
-    }));
 }
 
 export async function createEmployee(data: EmployeeInput) {
@@ -74,21 +73,16 @@ export async function createEmployee(data: EmployeeInput) {
             return { error: 'Business must be travel or isp' };
         }
 
-        const { error } = await supabase
-            .from('employees')
-            .insert({
+        await prisma.employee.create({
+            data: {
                 name,
                 role,
                 phone,
-                base_salary: baseSalary,
-                business_id: data.businessId,
+                baseSalary,
+                businessId: data.businessId,
                 active: data.active ?? true,
-            });
-
-        if (error) {
-            console.error('Create employee error:', error);
-            return { error: 'Failed to create employee' };
-        }
+            }
+        });
 
         revalidateEmployeeViews();
         return { success: true };
@@ -100,15 +94,6 @@ export async function createEmployee(data: EmployeeInput) {
 
 export async function updateEmployee(id: string, data: EmployeeInput) {
     try {
-        // Check if employee exists
-        const { data: employee } = await supabase
-            .from('employees')
-            .select('*')
-            .eq('id', id)
-            .single();
-
-        if (!employee) return { error: 'Employee record not found' };
-
         const name = normalizeText(data.name);
         if (!name) return { error: 'Employee name is required' };
 
@@ -125,22 +110,17 @@ export async function updateEmployee(id: string, data: EmployeeInput) {
             return { error: 'Business must be travel or isp' };
         }
 
-        const { error } = await supabase
-            .from('employees')
-            .update({
+        await prisma.employee.update({
+            where: { id },
+            data: {
                 name,
                 role,
                 phone,
-                base_salary: baseSalary,
-                business_id: data.businessId,
+                baseSalary,
+                businessId: data.businessId,
                 active: data.active ?? true,
-            })
-            .eq('id', id);
-
-        if (error) {
-            console.error('Update employee error:', error);
-            return { error: 'Failed to update employee' };
-        }
+            }
+        });
 
         revalidateEmployeeViews();
         return { success: true };
@@ -152,24 +132,9 @@ export async function updateEmployee(id: string, data: EmployeeInput) {
 
 export async function deleteEmployee(id: string) {
     try {
-        // Check if employee exists
-        const { data: employee } = await supabase
-            .from('employees')
-            .select('*')
-            .eq('id', id)
-            .single();
-
-        if (!employee) return { error: 'Employee record not found' };
-
-        const { error } = await supabase
-            .from('employees')
-            .delete()
-            .eq('id', id);
-
-        if (error) {
-            console.error('Delete employee error:', error);
-            return { error: 'Failed to delete employee' };
-        }
+        await prisma.employee.delete({
+            where: { id }
+        });
 
         revalidateEmployeeViews();
         return { success: true };

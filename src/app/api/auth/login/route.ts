@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { prisma } from '@/lib/prisma';
 import bcrypt from 'bcryptjs';
 import { encrypt, getPasswordFingerprint } from '@/lib/auth';
 import { cookies } from 'next/headers';
@@ -9,14 +9,11 @@ export async function POST(request: Request) {
         const body = await request.json();
         const { email, password } = body;
 
-        // Fetch user from Supabase
-        const { data: user, error } = await supabase
-            .from('users')
-            .select('*')
-            .eq('email', email)
-            .single();
+        const user = await prisma.user.findUnique({
+            where: { email },
+        });
 
-        if (error || !user) {
+        if (!user) {
             return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 });
         }
 
@@ -25,7 +22,6 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 });
         }
 
-        // Create session
         const session = await encrypt({
             id: user.id,
             email: user.email,
@@ -44,9 +40,9 @@ export async function POST(request: Request) {
     } catch (error) {
         console.error('Login error:', error);
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        return NextResponse.json({ 
-            error: 'Internal server error', 
-            details: process.env.NODE_ENV === 'development' ? errorMessage : undefined 
+        return NextResponse.json({
+            error: 'Internal server error',
+            details: process.env.NODE_ENV === 'development' ? errorMessage : undefined
         }, { status: 500 });
     }
 }

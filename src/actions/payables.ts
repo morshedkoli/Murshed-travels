@@ -1,7 +1,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { supabase } from '@/lib/supabase';
+import { prisma } from '@/lib/prisma';
 
 type BusinessType = 'travel' | 'isp';
 
@@ -15,10 +15,6 @@ type PayableInput = {
     paymentAmount?: number;
     settlementAccountId?: string;
 };
-
-function isValidBusiness(value: string): value is BusinessType {
-    return value === 'travel' || value === 'isp';
-}
 
 function normalizeDate(value: string) {
     const date = new Date(value);
@@ -59,59 +55,55 @@ function revalidatePayableViews() {
 }
 
 export async function getPayables() {
-    const { data: payables, error } = await supabase
-        .from('payables')
-        .select(`
-            *,
-            vendors:vendor_id (name)
-        `)
-        .order('due_date', { ascending: true });
+    try {
+        const payables = await prisma.payable.findMany({
+            include: { vendor: { select: { name: true } } },
+            orderBy: { dueDate: 'asc' }
+        });
 
-    if (error) {
+        return payables.map((item) => ({
+            _id: item.id,
+            date: item.date.toISOString(),
+            dueDate: item.dueDate ? item.dueDate.toISOString() : '',
+            amount: item.amount,
+            paidAmount: item.paidAmount || 0,
+            remainingAmount: remainingAmount(item.amount, item.paidAmount || 0),
+            businessId: (item.businessId as BusinessType) || 'travel',
+            vendorId: item.vendorId || '',
+            vendorName: item.vendor?.name || 'Unknown Vendor',
+            status: item.status,
+            description: item.description || '',
+        }));
+    } catch (error) {
         console.error('Error fetching payables:', error);
         return [];
     }
-
-    return (payables || []).map((item) => ({
-        _id: item.id,
-        date: item.date,
-        dueDate: item.due_date || '',
-        amount: item.amount,
-        paidAmount: item.paid_amount || 0,
-        remainingAmount: remainingAmount(item.amount, item.paid_amount || 0),
-        businessId: (item.business_id as BusinessType) || 'travel',
-        vendorId: item.vendor_id || '',
-        vendorName: item.vendors?.name || 'Unknown Vendor',
-        status: item.status,
-        description: item.description || '',
-    }));
 }
 
 export async function getPayableSettlementHistory(payableId: string) {
-    const { data: payments, error } = await supabase
-        .from('transactions')
-        .select(`
-            *,
-            accounts:account_id (name)
-        `)
-        .eq('reference_id', payableId)
-        .eq('reference_model', 'Payable')
-        .eq('type', 'expense')
-        .eq('category', 'Payable Settlement')
-        .order('date', { ascending: false });
+    try {
+        const payments = await prisma.transaction.findMany({
+            where: {
+                referenceId: payableId,
+                referenceModel: 'Payable',
+                type: 'expense',
+                category: 'Payable Settlement'
+            },
+            include: { account: { select: { name: true } } },
+            orderBy: { date: 'desc' }
+        });
 
-    if (error) {
+        return payments.map((item) => ({
+            _id: item.id,
+            date: item.date.toISOString(),
+            amount: item.amount,
+            accountName: item.account?.name || 'Unknown Account',
+            description: item.description || '',
+        }));
+    } catch (error) {
         console.error('Error fetching payable settlement history:', error);
         return [];
     }
-
-    return (payments || []).map((item) => ({
-        _id: item.id,
-        date: item.date,
-        amount: item.amount,
-        accountName: item.accounts?.name || 'Unknown Account',
-        description: item.description || '',
-    }));
 }
 
 export async function createPayable(data: PayableInput) {
@@ -125,48 +117,28 @@ export async function createPayable(data: PayableInput) {
         const amount = parsePositiveAmount(data.amount);
         if (!amount) return { error: 'Amount must be greater than 0' };
 
-        if (!isValidBusiness(data.businessId)) {
-            return { error: 'Business must be travel or isp' };
-        }
-
         const vendorId = normalizeText(data.vendorId);
         if (!vendorId) return { error: 'Vendor is required' };
 
-        // Verify vendor exists
-        const { data: vendor } = await supabase
-            .from('vendors')
-            .select('*')
-            .eq('id', vendorId)
-            .single();
-
-        if (!vendor) {
-            return { error: 'Selected vendor does not exist' };
-        }
-
-        // Create payable
-        const { error: payableError } = await supabase
-            .from('payables')
-            .insert({
-                date: date.toISOString(),
-                due_date: dueDate.toISOString(),
-                amount,
-                paid_amount: 0,
-                vendor_id: vendorId,
-                business_id: data.businessId,
-                status: 'unpaid',
-                description: normalizeText(data.description) || null,
+        await prisma.$transaction(async (tx) => {
+            await tx.payable.create({
+                data: {
+                    date,
+                    dueDate,
+                    amount,
+                    paidAmount: 0,
+                    vendorId,
+                    businessId: data.businessId,
+                    status: 'unpaid',
+                    description: normalizeText(data.description) || null,
+                }
             });
 
-        if (payableError) {
-            console.error('Create payable error:', payableError);
-            return { error: 'Failed to create payable' };
-        }
-
-        // Update vendor balance
-        await supabase
-            .from('vendors')
-            .update({ balance: vendor.balance + amount })
-            .eq('id', vendorId);
+            await tx.vendor.update({
+                where: { id: vendorId },
+                data: { balance: { increment: amount } }
+            });
+        });
 
         revalidatePayableViews();
         return { success: true };
@@ -187,157 +159,86 @@ export async function updatePayable(id: string, data: PayableInput) {
         const amount = parsePositiveAmount(data.amount);
         if (!amount) return { error: 'Amount must be greater than 0' };
 
-        if (!isValidBusiness(data.businessId)) {
-            return { error: 'Business must be travel or isp' };
-        }
-
         const vendorId = normalizeText(data.vendorId);
         if (!vendorId) return { error: 'Vendor is required' };
 
         const paymentAmount = parseNonNegative(data.paymentAmount);
-        if (paymentAmount === null) {
-            return { error: 'Payment amount must be zero or positive' };
-        }
+        if (paymentAmount === null) return { error: 'Payment amount must be zero or positive' };
 
         const settlementAccountId = normalizeText(data.settlementAccountId);
         if (paymentAmount > 0 && !settlementAccountId) {
             return { error: 'Settlement account is required when recording payment' };
         }
 
-        // Fetch existing payable
-        const { data: payable } = await supabase
-            .from('payables')
-            .select('*')
-            .eq('id', id)
-            .single();
+        const payable = await prisma.payable.findUnique({ where: { id } });
+        if (!payable) return { error: 'Payable record not found' };
 
-        if (!payable) {
-            return { error: 'Payable record not found' };
-        }
+        await prisma.$transaction(async (tx) => {
+            const oldVendorId = payable.vendorId;
+            const oldAmount = payable.amount;
+            const oldPaidAmount = payable.paidAmount || 0;
+            const oldRemaining = remainingAmount(oldAmount, oldPaidAmount);
 
-        // Verify vendor exists
-        const { data: vendor } = await supabase
-            .from('vendors')
-            .select('*')
-            .eq('id', vendorId)
-            .single();
+            const newPaidAmount = oldPaidAmount + paymentAmount;
 
-        if (!vendor) {
-            return { error: 'Selected vendor does not exist' };
-        }
+            const newRemaining = remainingAmount(amount, newPaidAmount);
+            const status = deriveStatus(amount, newPaidAmount);
 
-        // Verify settlement account if payment is being made
-        if (paymentAmount > 0 && settlementAccountId) {
-            const { data: account } = await supabase
-                .from('accounts')
-                .select('*')
-                .eq('id', settlementAccountId)
-                .single();
-
-            if (!account) {
-                return { error: 'Selected settlement account does not exist' };
+            if (oldVendorId === vendorId) {
+                const delta = newRemaining - oldRemaining;
+                if (delta !== 0) {
+                    await tx.vendor.update({
+                        where: { id: vendorId },
+                        data: { balance: { increment: delta } }
+                    });
+                }
+            } else {
+                await tx.vendor.update({
+                    where: { id: oldVendorId },
+                    data: { balance: { decrement: oldRemaining } }
+                });
+                await tx.vendor.update({
+                    where: { id: vendorId },
+                    data: { balance: { increment: newRemaining } }
+                });
             }
 
-            if ((account.balance || 0) < paymentAmount) {
-                return { error: 'Insufficient account balance for this settlement' };
-            }
-        }
-
-        const oldVendorId = payable.vendor_id;
-        const oldAmount = payable.amount;
-        const oldPaidAmount = payable.paid_amount || 0;
-        const oldRemaining = remainingAmount(oldAmount, oldPaidAmount);
-
-        const newPaidAmount = oldPaidAmount + paymentAmount;
-        if (newPaidAmount > amount) {
-            return { error: 'Payment amount cannot exceed remaining payable' };
-        }
-
-        const newRemaining = remainingAmount(amount, newPaidAmount);
-        const status = deriveStatus(amount, newPaidAmount);
-
-        // Handle vendor balance updates
-        if (oldVendorId === vendorId) {
-            const delta = newRemaining - oldRemaining;
-            if (delta !== 0) {
-                await supabase
-                    .from('vendors')
-                    .update({ balance: vendor.balance + delta })
-                    .eq('id', vendorId);
-            }
-        } else {
-            // Restore old vendor balance
-            const { data: oldVendor } = await supabase
-                .from('vendors')
-                .select('*')
-                .eq('id', oldVendorId)
-                .single();
-
-            if (oldVendor) {
-                await supabase
-                    .from('vendors')
-                    .update({ balance: oldVendor.balance - oldRemaining })
-                    .eq('id', oldVendorId);
-            }
-
-            // Update new vendor balance
-            await supabase
-                .from('vendors')
-                .update({ balance: vendor.balance + newRemaining })
-                .eq('id', vendorId);
-        }
-
-        // Record payment transaction if applicable
-        if (paymentAmount > 0 && settlementAccountId) {
-            await supabase
-                .from('transactions')
-                .insert({
-                    date: date.toISOString(),
-                    amount: paymentAmount,
-                    type: 'expense',
-                    category: 'Payable Settlement',
-                    business_id: data.businessId,
-                    account_id: settlementAccountId,
-                    vendor_id: vendorId,
-                    description: `Settlement against payable #${id}`,
-                    reference_id: id,
-                    reference_model: 'Payable',
+            if (paymentAmount > 0 && settlementAccountId) {
+                await tx.transaction.create({
+                    data: {
+                        date,
+                        amount: paymentAmount,
+                        type: 'expense',
+                        category: 'Payable Settlement',
+                        businessId: data.businessId,
+                        accountId: settlementAccountId,
+                        vendorId,
+                        description: `Settlement against payable #${id}`,
+                        referenceId: id,
+                        referenceModel: 'Payable',
+                    }
                 });
 
-            // Update account balance
-            const { data: account } = await supabase
-                .from('accounts')
-                .select('*')
-                .eq('id', settlementAccountId)
-                .single();
-
-            if (account) {
-                await supabase
-                    .from('accounts')
-                    .update({ balance: account.balance - paymentAmount })
-                    .eq('id', settlementAccountId);
+                await tx.account.update({
+                    where: { id: settlementAccountId },
+                    data: { balance: { decrement: paymentAmount } }
+                });
             }
-        }
 
-        // Update payable
-        const { error } = await supabase
-            .from('payables')
-            .update({
-                date: date.toISOString(),
-                due_date: dueDate.toISOString(),
-                amount,
-                paid_amount: newPaidAmount,
-                status,
-                business_id: data.businessId,
-                vendor_id: vendorId,
-                description: normalizeText(data.description) || null,
-            })
-            .eq('id', id);
-
-        if (error) {
-            console.error('Update payable error:', error);
-            return { error: 'Failed to update payable' };
-        }
+            await tx.payable.update({
+                where: { id },
+                data: {
+                    date,
+                    dueDate,
+                    amount,
+                    paidAmount: newPaidAmount,
+                    status,
+                    businessId: data.businessId,
+                    vendorId,
+                    description: normalizeText(data.description) || null,
+                }
+            });
+        });
 
         revalidatePayableViews();
         return { success: true };
@@ -349,46 +250,21 @@ export async function updatePayable(id: string, data: PayableInput) {
 
 export async function deletePayable(id: string) {
     try {
-        // Fetch existing payable
-        const { data: payable } = await supabase
-            .from('payables')
-            .select('*')
-            .eq('id', id)
-            .single();
+        const payable = await prisma.payable.findUnique({ where: { id } });
+        if (!payable) return { error: 'Payable record not found' };
 
-        if (!payable) {
-            return { error: 'Payable record not found' };
-        }
+        const outstanding = remainingAmount(payable.amount, payable.paidAmount || 0);
 
-        const vendorId = payable.vendor_id;
-        const outstanding = remainingAmount(payable.amount, payable.paid_amount || 0);
-
-        // Update vendor balance
-        if (outstanding !== 0) {
-            const { data: vendor } = await supabase
-                .from('vendors')
-                .select('*')
-                .eq('id', vendorId)
-                .single();
-
-            if (vendor) {
-                await supabase
-                    .from('vendors')
-                    .update({ balance: vendor.balance - outstanding })
-                    .eq('id', vendorId);
+        await prisma.$transaction(async (tx) => {
+            if (outstanding !== 0) {
+                await tx.vendor.update({
+                    where: { id: payable.vendorId },
+                    data: { balance: { decrement: outstanding } }
+                });
             }
-        }
 
-        // Delete payable
-        const { error } = await supabase
-            .from('payables')
-            .delete()
-            .eq('id', id);
-
-        if (error) {
-            console.error('Delete payable error:', error);
-            return { error: 'Failed to delete payable' };
-        }
+            await tx.payable.delete({ where: { id } });
+        });
 
         revalidatePayableViews();
         return { success: true };

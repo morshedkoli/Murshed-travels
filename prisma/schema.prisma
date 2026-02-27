@@ -1,0 +1,322 @@
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  email     String   @unique
+  password  String
+  role      String   @default("admin")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("users")
+}
+
+model Account {
+  id            String   @id @default(auto()) @map("_id") @db.ObjectId
+  name          String
+  type          String
+  balance       Float    @default(0)
+  accountNumber String?
+  bankName      String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  transactions  Transaction[]
+
+  @@map("accounts")
+}
+
+model Customer {
+  id                       String   @id @default(auto()) @map("_id") @db.ObjectId
+  name                     String
+  phone                    String   @unique
+  email                    String?
+  address                  String?
+  balance                  Float    @default(0)
+  passportNumber           String?
+  nationality              String?
+  dateOfBirth              DateTime?
+  frequentFlyerNumber      String?
+  emergencyContactName     String?
+  emergencyContactPhone    String?
+  emergencyContactRelation String?
+  totalServices            Int      @default(0)
+  notes                    String?
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  services                 Service[]
+  transactions             Transaction[]
+  receivables              Receivable[]
+
+  @@map("customers")
+}
+
+model Vendor {
+  id                      String   @id @default(auto()) @map("_id") @db.ObjectId
+  name                    String
+  phone                   String?
+  email                   String?
+  commissionType          String   @default("fixed")
+  commissionValue         Float    @default(0)
+  contactPersonName       String?
+  contactPersonPhone      String?
+  contactPersonEmail      String?
+  bankAccountName         String?
+  bankAccountNumber       String?
+  bankName                String?
+  bankBranch              String?
+  status                  String   @default("active")
+  rating                  Int?
+  notes                   String?
+  balance                 Float    @default(0)
+  totalServicesProvided   Int      @default(0)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  serviceCategories       VendorServiceCategory[]
+  serviceTemplates        VendorServiceTemplate[]
+  services                Service[]
+  transactions            Transaction[]
+  payables                Payable[]
+
+  @@map("vendors")
+}
+
+model VendorServiceCategory {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  vendorId  String   @db.ObjectId
+  category  String
+  createdAt DateTime @default(now())
+
+  vendor    Vendor   @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+
+  @@unique([vendorId, category])
+  @@map("vendor_service_categories")
+}
+
+model VendorServiceTemplate {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  vendorId     String   @db.ObjectId
+  name         String
+  serviceType  String
+  category     String
+  defaultPrice Float
+  defaultCost  Float
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  vendor       Vendor   @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+
+  @@map("vendor_service_templates")
+}
+
+model Service {
+  id                     String   @id @default(auto()) @map("_id") @db.ObjectId
+  name                   String
+  description            String?
+  category               String
+  price                  Float
+  cost                   Float
+  profit                 Float    @default(0)
+  status                 String   @default("pending")
+  customerId             String   @db.ObjectId
+  vendorId               String   @db.ObjectId
+  deliveryDate           DateTime?
+  expenseRecorded        Boolean  @default(false)
+  expenseTransactionId   String?  @db.ObjectId
+  receivableId           String?  @db.ObjectId
+  payableId              String?  @db.ObjectId
+  serviceType            String
+
+  // Visa details
+  visaType               String?
+  visaCountry            String?
+  visaApplicationDate    DateTime?
+  visaSubmissionDate     DateTime?
+  visaApprovalDate       DateTime?
+  visaNumber             String?
+  visaExpiryDate         DateTime?
+  visaEntryType          String?
+  visaDuration           String?
+
+  // Air ticket details
+  ticketAirline          String?
+  ticketFlightNumber     String?
+  ticketRouteFrom        String?
+  ticketRouteTo          String?
+  ticketDepartureDate    DateTime?
+  ticketArrivalDate      DateTime?
+  ticketFlightClass      String?
+  ticketPnr              String?
+  ticketNumber           String?
+  ticketBaggageAllowance String?
+  ticketIsRoundTrip      Boolean  @default(false)
+
+  // Medical details
+  medicalCenter          String?
+  medicalAppointmentDate DateTime?
+  medicalReportDate      DateTime?
+  medicalTestResults     String?
+  medicalCertificateNumber String?
+  medicalExpiryDate      DateTime?
+
+  // Taqamul details
+  taqamulExamCenter        String?
+  taqamulExamDate          DateTime?
+  taqamulRegistrationNumber String?
+  taqamulResultStatus      String?
+  taqamulCertificateNumber String?
+  taqamulScore             Float?
+
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  customer               Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  vendor                 Vendor   @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  
+  passengers             ServicePassenger[]
+  documents              ServiceDocument[]
+  statusHistory          ServiceStatusHistory[]
+
+  @@map("services")
+}
+
+model ServicePassenger {
+  id             String   @id @default(auto()) @map("_id") @db.ObjectId
+  serviceId      String   @db.ObjectId
+  name           String?
+  passportNumber String?
+  dateOfBirth    DateTime?
+  nationality    String?
+  createdAt      DateTime @default(now())
+
+  service        Service  @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@map("service_passengers")
+}
+
+model ServiceDocument {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  serviceId  String   @db.ObjectId
+  type       String
+  url        String
+  uploadedAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+
+  service    Service  @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@map("service_documents")
+}
+
+model ServiceStatusHistory {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  serviceId  String   @db.ObjectId
+  status     String
+  date       DateTime @default(now())
+  notes      String?
+  createdAt  DateTime @default(now())
+
+  service    Service  @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@map("service_status_history")
+}
+
+model Transaction {
+  id             String   @id @default(auto()) @map("_id") @db.ObjectId
+  date           DateTime @default(now())
+  amount         Float
+  type           String
+  category       String
+  businessId     String   @default("travel")
+  accountId      String   @db.ObjectId
+  customerId     String?  @db.ObjectId
+  vendorId       String?  @db.ObjectId
+  description    String?
+  referenceId    String?  @db.ObjectId
+  referenceModel String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  account        Account  @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  customer       Customer? @relation(fields: [customerId], references: [id])
+  vendor         Vendor?  @relation(fields: [vendorId], references: [id])
+
+  @@map("transactions")
+}
+
+model Employee {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  name       String
+  role       String
+  phone      String
+  baseSalary Float
+  businessId String   @default("travel")
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  salaries   Salary[]
+
+  @@map("employees")
+}
+
+model Salary {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  employeeId String   @db.ObjectId
+  amount     Float
+  month      String
+  year       Int
+  businessId String   @default("travel")
+  status     String   @default("unpaid")
+  paidDate   DateTime?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@map("salaries")
+}
+
+model Payable {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  businessId  String   @default("travel")
+  vendorId    String   @db.ObjectId
+  amount      Float
+  paidAmount  Float    @default(0)
+  date        DateTime @default(now())
+  dueDate     DateTime?
+  status      String   @default("unpaid")
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  vendor      Vendor   @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+
+  @@map("payables")
+}
+
+model Receivable {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  businessId  String   @default("travel")
+  customerId  String   @db.ObjectId
+  amount      Float
+  paidAmount  Float    @default(0)
+  date        DateTime @default(now())
+  dueDate     DateTime?
+  status      String   @default("unpaid")
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  customer    Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@map("receivables")
+}
