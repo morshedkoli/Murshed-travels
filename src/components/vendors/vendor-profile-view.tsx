@@ -30,11 +30,11 @@ type VendorTemplate = {
 type VendorProfile = {
     _id: string;
     name: string;
-    phone?: string;
-    email?: string;
+    phone?: string | null;
+    email?: string | null;
     serviceCategoryLabels: string[];
-    status?: string;
-    rating?: number;
+    status?: string | null;
+    rating?: number | null;
     balance?: number;
     serviceTemplates: VendorTemplate[];
 };
@@ -313,8 +313,8 @@ export function VendorProfileView({ vendor, services, ledger, accounts, transact
 
         generateVendorLedgerPDF({
             vendorName: vendor.name,
-            vendorPhone: vendor.phone,
-            vendorEmail: vendor.email,
+            vendorPhone: vendor.phone || undefined,
+            vendorEmail: vendor.email || undefined,
             entries,
             openingBalance,
             closingBalance,

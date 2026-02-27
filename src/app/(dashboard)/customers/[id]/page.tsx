@@ -8,6 +8,17 @@ type CustomerProfilePageProps = {
     params: Promise<{ id: string }>;
 };
 
+const SERVICE_STATUSES = ['pending', 'in-progress', 'ready', 'delivered', 'cancelled'] as const;
+type ServiceStatus = (typeof SERVICE_STATUSES)[number];
+
+function toServiceStatus(status: string): ServiceStatus {
+    return SERVICE_STATUSES.includes(status as ServiceStatus) ? (status as ServiceStatus) : 'pending';
+}
+
+function toTransactionType(type: string): 'income' | 'expense' {
+    return type === 'expense' ? 'expense' : 'income';
+}
+
 export default async function CustomerProfilePage({ params }: CustomerProfilePageProps) {
     const { id } = await params;
     const [customer, services, ledger, accounts, transactions] = await Promise.all([
@@ -25,10 +36,16 @@ export default async function CustomerProfilePage({ params }: CustomerProfilePag
     return (
         <CustomerProfileView
             customer={customer}
-            services={services}
+            services={services.map((service) => ({
+                ...service,
+                status: toServiceStatus(service.status),
+            }))}
             ledger={ledger}
             accounts={accounts.map((account) => ({ _id: account._id, name: account.name }))}
-            transactions={transactions}
+            transactions={transactions.map((transaction) => ({
+                ...transaction,
+                type: toTransactionType(transaction.type),
+            }))}
         />
     );
 }

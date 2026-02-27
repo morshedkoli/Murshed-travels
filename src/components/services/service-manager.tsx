@@ -139,10 +139,32 @@ function formatCurrency(amount: number) {
     return `৳${amount.toLocaleString()}`;
 }
 
+function toServiceType(value: string): ServiceRow['serviceType'] {
+    if (value === 'visa' || value === 'air_ticket' || value === 'medical' || value === 'taqamul' || value === 'hotel' || value === 'package') {
+        return value;
+    }
+    return 'other';
+}
+
+function toServiceStatus(value: string): ServiceRow['status'] {
+    if (value === 'in-progress' || value === 'ready' || value === 'delivered' || value === 'cancelled') {
+        return value;
+    }
+    return 'pending';
+}
+
+function normalizeServiceRows(rows: Awaited<ReturnType<typeof getServices>>): ServiceRow[] {
+    return rows.map((row) => ({
+        ...row,
+        serviceType: toServiceType(row.serviceType),
+        status: toServiceStatus(row.status),
+    }));
+}
+
 export function ServiceManager({ services, customers, vendors, initialCustomerId, initialVendorId, autoOpenCreate = false }: ServiceManagerProps) {
     const router = useRouter();
     const didAutoOpen = useRef(false);
-    const [rows, setRows] = useState(services);
+    const [rows, setRows] = useState<ServiceRow[]>(normalizeServiceRows(services));
     const [isOpen, setIsOpen] = useState(false);
     const [editingId, setEditingId] = useState<string | null>(null);
     const [form, setForm] = useState<FormState>(initialForm);
@@ -383,7 +405,7 @@ export function ServiceManager({ services, customers, vendors, initialCustomerId
             }
 
             const latest = await getServices();
-            setRows(latest);
+            setRows(normalizeServiceRows(latest));
             setIsOpen(false);
             setEditingId(null);
             setForm(initialForm);
@@ -413,7 +435,7 @@ export function ServiceManager({ services, customers, vendors, initialCustomerId
             }
 
             const latest = await getServices();
-            setRows(latest);
+            setRows(normalizeServiceRows(latest));
             setDeliverTargetId(null);
             toast({ title: 'Service delivered', variant: 'success' });
         } catch {

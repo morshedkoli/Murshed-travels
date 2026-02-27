@@ -1,6 +1,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
+import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 
 export async function getCustomers() {
@@ -253,7 +254,7 @@ export async function recordCustomerPayment(data: {
         let remainingPayment = amount;
         let settledAmount = 0;
         let discountedAmount = 0;
-        const transactionsToCreate = [];
+        const transactionsToCreate: Prisma.TransactionCreateManyInput[] = [];
 
         for (const receivable of workingReceivables) {
             if (remainingPayment <= 0) break;

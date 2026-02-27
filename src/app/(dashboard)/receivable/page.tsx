@@ -7,6 +7,13 @@ type ReceivablePageProps = {
   searchParams?: { aging?: string; asOf?: string } | Promise<{ aging?: string; asOf?: string }>;
 };
 
+const RECEIVABLE_STATUSES = ['unpaid', 'partial', 'paid'] as const;
+type ReceivableStatus = (typeof RECEIVABLE_STATUSES)[number];
+
+function toReceivableStatus(status: string): ReceivableStatus {
+  return RECEIVABLE_STATUSES.includes(status as ReceivableStatus) ? (status as ReceivableStatus) : 'unpaid';
+}
+
 function matchesAgingBucket(days: number, bucket: string) {
   if (bucket === '0-30') return days <= 30;
   if (bucket === '31-60') return days >= 31 && days <= 60;
@@ -37,7 +44,10 @@ export default async function ReceivablePage({ searchParams }: ReceivablePagePro
 
   return (
     <ReceivableManager
-      entries={filteredEntries}
+      entries={filteredEntries.map((entry) => ({
+        ...entry,
+        status: toReceivableStatus(entry.status),
+      }))}
       customers={customers.map((customer) => ({ _id: customer._id, name: customer.name }))}
       accounts={accounts.map((account) => ({ _id: account._id, name: account.name }))}
       filterContext={agingBucket ? `Aging filter: ${agingBucket} days as of ${params.asOf ?? 'today'}` : undefined}

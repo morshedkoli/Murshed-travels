@@ -20,10 +20,10 @@ type CustomerProfile = {
     _id: string;
     name: string;
     phone: string;
-    email?: string;
-    address?: string;
-    passportNumber?: string;
-    nationality?: string;
+    email?: string | null;
+    address?: string | null;
+    passportNumber?: string | null;
+    nationality?: string | null;
     balance?: number;
 };
 
@@ -450,7 +450,7 @@ export function CustomerProfileView({ customer, services, ledger, accounts, tran
         generateCustomerLedgerPDF({
             customerName: customer.name,
             customerPhone: customer.phone,
-            customerEmail: customer.email,
+            customerEmail: customer.email || undefined,
             entries,
             openingBalance,
             closingBalance,

@@ -85,8 +85,19 @@ function money(value: number) {
     return `৳${value.toLocaleString()}`;
 }
 
+function toBusinessType(value: string): 'travel' | 'isp' {
+    return value === 'isp' ? 'isp' : 'travel';
+}
+
+function normalizeExpenseRows(rows: Awaited<ReturnType<typeof getExpenseEntries>>): ExpenseRow[] {
+    return rows.map((row) => ({
+        ...row,
+        businessId: toBusinessType(row.businessId),
+    }));
+}
+
 export function ExpenseManager({ entries, accounts, vendors }: ExpenseManagerProps) {
-    const [rows, setRows] = useState(entries);
+    const [rows, setRows] = useState<ExpenseRow[]>(normalizeExpenseRows(entries));
     const [isOpen, setIsOpen] = useState(false);
     const [editingId, setEditingId] = useState<string | null>(null);
     const [form, setForm] = useState<FormState>(initialForm);
@@ -177,7 +188,7 @@ export function ExpenseManager({ entries, accounts, vendors }: ExpenseManagerPro
             }
 
             const latest = await getExpenseEntries();
-            setRows(latest);
+            setRows(normalizeExpenseRows(latest));
             setIsOpen(false);
             setEditingId(null);
             setForm(initialForm);

@@ -111,8 +111,21 @@ function money(value: number) {
     return `৳${value.toLocaleString()}`;
 }
 
+function toReceivableStatus(status: string): ReceivableStatus {
+    if (status === 'partial') return 'partial';
+    if (status === 'paid') return 'paid';
+    return 'unpaid';
+}
+
+function normalizeReceivableRows(rows: Awaited<ReturnType<typeof getReceivables>>): ReceivableRow[] {
+    return rows.map((row) => ({
+        ...row,
+        status: toReceivableStatus(row.status),
+    }));
+}
+
 export function ReceivableManager({ entries, customers, accounts, filterContext, clearFilterHref }: ReceivableManagerProps) {
-    const [rows, setRows] = useState(entries);
+    const [rows, setRows] = useState<ReceivableRow[]>(normalizeReceivableRows(entries));
     const [isOpen, setIsOpen] = useState(false);
     const [editingId, setEditingId] = useState<string | null>(null);
     const [form, setForm] = useState<FormState>(initialForm);
@@ -190,7 +203,7 @@ export function ReceivableManager({ entries, customers, accounts, filterContext,
             }
 
             const latest = await getReceivables();
-            setRows(latest);
+            setRows(normalizeReceivableRows(latest));
             setIsOpen(false);
             setEditingId(null);
             setForm(initialForm);
@@ -289,7 +302,7 @@ export function ReceivableManager({ entries, customers, accounts, filterContext,
         }
 
         const latest = await getReceivables();
-        setRows(latest);
+        setRows(normalizeReceivableRows(latest));
         setPaymentTarget(null);
         setPaymentAmount('');
         setPaymentDiscount('0');
