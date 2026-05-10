@@ -9,21 +9,19 @@ async function seed() {
     try {
         console.log('Starting database seeding...');
 
-        const adminEmail = 'murshedkoli@gmail.com';
-        const adminPassword = 'password';
+        const adminPin = '1234';
 
         await prisma.user.deleteMany({ where: { role: 'admin' } });
         console.log('Old admin removed (if existed).');
 
-        const hashedPassword = await bcrypt.hash(adminPassword, 10);
+        const hashedPin = await bcrypt.hash(adminPin, 10);
         await prisma.user.create({
             data: {
-                email: adminEmail,
-                password: hashedPassword,
+                pin: hashedPin,
                 role: 'admin',
             },
         });
-        console.log(`✅ Admin created: ${adminEmail} / ${adminPassword}`);
+        console.log(`✅ Admin created with PIN: ${adminPin}`);
 
         const accounts = [
             { name: 'Cash Hand', type: 'Cash' },

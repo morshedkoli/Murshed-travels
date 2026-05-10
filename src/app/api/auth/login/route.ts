@@ -7,27 +7,37 @@ import { cookies } from 'next/headers';
 export async function POST(request: Request) {
     try {
         const body = await request.json();
-        const { email, password } = body;
+        const { pin } = body;
 
-        const user = await prisma.user.findUnique({
-            where: { email },
-        });
-
-        if (!user) {
-            return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 });
+        if (!pin || typeof pin !== 'string' || pin.length !== 4) {
+            return NextResponse.json({ error: 'Invalid 4-digit PIN provided' }, { status: 400 });
         }
 
-        const isMatch = await bcrypt.compare(password, user.password);
-        if (!isMatch) {
-            return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 });
+        let user = await prisma.user.findFirst();
+
+        if (!user) {
+            // First time setup - register the admin with the provided PIN
+            const hashedPin = await bcrypt.hash(pin, 10);
+            user = await prisma.user.create({
+                data: {
+                    pin: hashedPin,
+                    role: 'admin',
+                },
+            });
+        } else {
+            // Validate against existing PIN
+            const isMatch = await bcrypt.compare(pin, user.pin);
+            if (!isMatch) {
+                return NextResponse.json({ error: 'Invalid PIN' }, { status: 401 });
+            }
         }
 
         const session = await encrypt({
             id: user.id,
-            email: user.email,
             role: user.role,
-            pwdv: getPasswordFingerprint(user.password),
+            pwdv: getPasswordFingerprint(user.pin),
         });
+        
         const cookieStore = await cookies();
         cookieStore.set('session', session, {
             httpOnly: true,

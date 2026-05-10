@@ -32,7 +32,6 @@ import {
 } from '@/components/ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
-type BusinessType = 'travel' | 'isp';
 type PayableStatus = 'unpaid' | 'partial' | 'paid';
 
 type PayableRow = {
@@ -42,7 +41,6 @@ type PayableRow = {
     amount: number;
     paidAmount: number;
     remainingAmount: number;
-    businessId: BusinessType;
     vendorId: string;
     vendorName: string;
     status: PayableStatus;
@@ -56,7 +54,7 @@ type Option = {
 };
 
 type PayableManagerProps = {
-    entries: PayableRow[];
+    entries: (PayableRow & { businessId?: string })[];
     vendors: Option[];
     accounts: Option[];
     filterContext?: string;
@@ -75,7 +73,6 @@ type FormState = {
     date: string;
     dueDate: string;
     amount: string;
-    businessId: BusinessType;
     vendorId: string;
     description: string;
     paymentAmount: string;
@@ -86,7 +83,6 @@ const initialForm: FormState = {
     date: new Date().toISOString().slice(0, 10),
     dueDate: new Date().toISOString().slice(0, 10),
     amount: '',
-    businessId: 'travel',
     vendorId: '',
     description: '',
     paymentAmount: '0',
@@ -112,7 +108,9 @@ function money(value: number) {
 }
 
 export function PayableManager({ entries, vendors, accounts, filterContext, clearFilterHref }: PayableManagerProps) {
-    const [rows, setRows] = useState(entries);
+    const [rows, setRows] = useState<PayableRow[]>(
+        entries.map(({ businessId: _b, ...row }) => row)
+    );
     const [isOpen, setIsOpen] = useState(false);
     const [editingId, setEditingId] = useState<string | null>(null);
     const [form, setForm] = useState<FormState>(initialForm);
@@ -143,7 +141,6 @@ export function PayableManager({ entries, vendors, accounts, filterContext, clea
             date: row.date.slice(0, 10),
             dueDate: row.dueDate ? row.dueDate.slice(0, 10) : '',
             amount: String(row.amount),
-            businessId: row.businessId,
             vendorId: row.vendorId,
             description: row.description || '',
             paymentAmount: '0',
@@ -162,7 +159,7 @@ export function PayableManager({ entries, vendors, accounts, filterContext, clea
             date: form.date,
             dueDate: form.dueDate,
             amount: Number(form.amount),
-            businessId: form.businessId,
+            businessId: 'travel' as const,
             vendorId: form.vendorId,
             description: form.description || undefined,
             paymentAmount: editingId ? Number(form.paymentAmount) : 0,
@@ -269,9 +266,8 @@ export function PayableManager({ entries, vendors, accounts, filterContext, clea
                     <div className="overflow-x-auto">
                         <table className="w-full min-w-[800px] text-sm">
                             <thead>
-                                <tr className="border-b border-border bg-muted/30">
+                                    <tr className="border-b border-border bg-muted/30">
                                     <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground">Vendor</th>
-                                    <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground">Business</th>
                                     <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground">Due Date</th>
                                     <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground">Status</th>
                                     <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground">Total</th>
@@ -283,7 +279,7 @@ export function PayableManager({ entries, vendors, accounts, filterContext, clea
                             <tbody className="divide-y divide-border">
                                 {rows.length === 0 ? (
                                     <tr>
-                                        <td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">
+                                        <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
                                             No payable records
                                         </td>
                                     </tr>
@@ -291,7 +287,6 @@ export function PayableManager({ entries, vendors, accounts, filterContext, clea
                                     rows.map((row) => (
                                         <tr key={row._id} className="hover:bg-muted/30">
                                             <td className="px-4 py-3 font-medium">{row.vendorName}</td>
-                                            <td className="px-4 py-3 text-muted-foreground uppercase">{row.businessId}</td>
                                             <td className="px-4 py-3 text-muted-foreground">{row.dueDate ? formatDate(row.dueDate) : '-'}</td>
                                             <td className="px-4 py-3">
                                                 <span className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${statusClassMap[row.status]}`}>
@@ -346,18 +341,6 @@ export function PayableManager({ entries, vendors, accounts, filterContext, clea
                             <div className="space-y-2">
                                 <Label>Amount</Label>
                                 <Input type="number" min="0" step="0.01" value={form.amount} onChange={(e) => setForm(p => ({ ...p, amount: e.target.value }))} required />
-                            </div>
-                            <div className="space-y-2">
-                                <Label>Business</Label>
-                                <Select value={form.businessId} onValueChange={(v) => setForm(p => ({ ...p, businessId: v as BusinessType }))}>
-                                    <SelectTrigger>
-                                        <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="travel">Travel</SelectItem>
-                                        <SelectItem value="isp">ISP</SelectItem>
-                                    </SelectContent>
-                                </Select>
                             </div>
                             <div className="space-y-2 sm:col-span-2">
                                 <Label>Vendor</Label>

@@ -495,9 +495,29 @@ export async function updateService(id: string, data: ServiceInput) {
 
             if (data.status === 'cancelled') {
                 if (service.receivableId) {
+                    const receivable = await tx.receivable.findUnique({ where: { id: service.receivableId } });
+                    if (receivable) {
+                        const outstanding = Math.max(0, receivable.amount - (receivable.paidAmount || 0));
+                        if (outstanding > 0) {
+                            await tx.customer.update({
+                                where: { id: service.customerId },
+                                data: { balance: { decrement: outstanding } }
+                            });
+                        }
+                    }
                     await tx.receivable.delete({ where: { id: service.receivableId } });
                 }
                 if (service.payableId) {
+                    const payable = await tx.payable.findUnique({ where: { id: service.payableId } });
+                    if (payable) {
+                        const outstanding = Math.max(0, payable.amount - (payable.paidAmount || 0));
+                        if (outstanding > 0) {
+                            await tx.vendor.update({
+                                where: { id: service.vendorId },
+                                data: { balance: { decrement: outstanding } }
+                            });
+                        }
+                    }
                     await tx.payable.delete({ where: { id: service.payableId } });
                 }
             }
@@ -685,9 +705,29 @@ export async function updateServiceStatus(
         await prisma.$transaction(async (tx) => {
             if (status === 'cancelled') {
                 if (service.receivableId) {
+                    const receivable = await tx.receivable.findUnique({ where: { id: service.receivableId } });
+                    if (receivable) {
+                        const outstanding = Math.max(0, receivable.amount - (receivable.paidAmount || 0));
+                        if (outstanding > 0) {
+                            await tx.customer.update({
+                                where: { id: service.customerId },
+                                data: { balance: { decrement: outstanding } }
+                            });
+                        }
+                    }
                     await tx.receivable.delete({ where: { id: service.receivableId } });
                 }
                 if (service.payableId) {
+                    const payable = await tx.payable.findUnique({ where: { id: service.payableId } });
+                    if (payable) {
+                        const outstanding = Math.max(0, payable.amount - (payable.paidAmount || 0));
+                        if (outstanding > 0) {
+                            await tx.vendor.update({
+                                where: { id: service.vendorId },
+                                data: { balance: { decrement: outstanding } }
+                            });
+                        }
+                    }
                     await tx.payable.delete({ where: { id: service.payableId } });
                 }
 
@@ -763,6 +803,16 @@ export async function updateServiceStatus(
                 }
             } else if (status !== 'delivered' && oldStatus === 'delivered') {
                 if (service.payableId) {
+                    const payable = await tx.payable.findUnique({ where: { id: service.payableId } });
+                    if (payable) {
+                        const outstanding = Math.max(0, payable.amount - (payable.paidAmount || 0));
+                        if (outstanding > 0) {
+                            await tx.vendor.update({
+                                where: { id: service.vendorId },
+                                data: { balance: { decrement: outstanding } }
+                            });
+                        }
+                    }
                     await tx.payable.delete({ where: { id: service.payableId } });
                     await tx.service.update({
                         where: { id },

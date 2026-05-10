@@ -4,12 +4,11 @@ import * as dotenv from 'dotenv';
 import * as path from 'path';
 
 // Load .env
-dotenv.config({ path: path.resolve(process.cwd(), '.env') });
+dotenv.config({ path: path.resolve(process.cwd(), '.env.local') });
 const prisma = new PrismaClient();
 
 async function updateAdmin() {
-    const newEmail = 'murshedkoli@gmail.com';
-    const newPassword = 'password';
+    const newPin = '2580';
 
     console.log('🔧 Connecting to DB...');
 
@@ -18,12 +17,11 @@ async function updateAdmin() {
     });
     console.log('✅ Old admin user(s) deleted.');
 
-    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    const hashedPin = await bcrypt.hash(newPin, 10);
 
     await prisma.user.create({
         data: {
-            email: newEmail,
-            password: hashedPassword,
+            pin: hashedPin,
             role: 'admin',
         },
     });

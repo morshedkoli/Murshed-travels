@@ -85,37 +85,40 @@ export async function getDashboardStats() {
         const unsettledVendorCost = unsettledServices.reduce((sum, s) => sum + (s.cost || 0), 0);
         const unsettledVendorCostCount = unsettledServices.length;
 
-        // Recent delivered services for agent ledger
+        // Recent delivered services — batch-fetch linked receivables/payables (2 queries, not N*2)
         const recentDelivered = await prisma.service.findMany({
             where: { status: 'delivered' },
             include: {
                 customer: { select: { name: true } },
-                vendor: { select: { name: true } }
+                vendor: { select: { name: true } },
             },
             orderBy: { deliveryDate: 'desc' },
             take: 10
         });
 
-        const agentLedger = await Promise.all(recentDelivered.map(async (row) => {
-            let receivableAmount = row.price;
-            let receivablePaid = 0;
-            if (row.receivableId) {
-                const rec = await prisma.receivable.findUnique({ where: { id: row.receivableId } });
-                if (rec) {
-                    receivableAmount = rec.amount;
-                    receivablePaid = rec.paidAmount;
-                }
-            }
+        const receivableIds = recentDelivered.flatMap(s => s.receivableId ? [s.receivableId] : []);
+        const payableIds = recentDelivered.flatMap(s => s.payableId ? [s.payableId] : []);
 
-            let payableAmount = row.cost;
-            let payablePaid = 0;
-            if (row.payableId) {
-                const pay = await prisma.payable.findUnique({ where: { id: row.payableId } });
-                if (pay) {
-                    payableAmount = pay.amount;
-                    payablePaid = pay.paidAmount;
-                }
-            }
+        const [linkedReceivables, linkedPayables] = await Promise.all([
+            receivableIds.length > 0
+                ? prisma.receivable.findMany({ where: { id: { in: receivableIds } }, select: { id: true, amount: true, paidAmount: true } })
+                : [],
+            payableIds.length > 0
+                ? prisma.payable.findMany({ where: { id: { in: payableIds } }, select: { id: true, amount: true, paidAmount: true } })
+                : [],
+        ]);
+
+        const recMap = new Map(linkedReceivables.map(r => [r.id, r]));
+        const payMap = new Map(linkedPayables.map(p => [p.id, p]));
+
+        const agentLedger = recentDelivered.map((row) => {
+            const rec = row.receivableId ? recMap.get(row.receivableId) : undefined;
+            const pay = row.payableId ? payMap.get(row.payableId) : undefined;
+
+            const receivableAmount = rec ? rec.amount : row.price;
+            const receivablePaid = rec ? (rec.paidAmount || 0) : 0;
+            const payableAmount = pay ? pay.amount : (row.cost || 0);
+            const payablePaid = pay ? (pay.paidAmount || 0) : 0;
 
             return {
                 _id: row.id,
@@ -127,9 +130,9 @@ export async function getDashboardStats() {
                 customerDue: Math.max(0, receivableAmount - receivablePaid),
                 vendorAmount: row.cost || 0,
                 vendorDue: Math.max(0, payableAmount - payablePaid),
-                profit: row.profit || row.price - (row.cost || 0),
+                profit: row.profit ?? (row.price - (row.cost || 0)),
             };
-        }));
+        });
 
         return {
             totalBalance,
@@ -171,8 +174,33 @@ export async function getDashboardStats() {
 }
 
 export async function getChartData() {
-    return [
-        { name: 'Income', value: 0 },
-        { name: 'Expense', value: 0 },
-    ];
+    try {
+        const now = new Date();
+        const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
+
+        const transactions = await prisma.transaction.findMany({
+            where: { date: { gte: sixMonthsAgo } },
+            select: { date: true, amount: true, type: true },
+        });
+
+        const monthLabels = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        const months: Record<string, { name: string; income: number; expense: number }> = {};
+
+        for (let i = 5; i >= 0; i--) {
+            const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+            const key = `${d.getFullYear()}-${d.getMonth()}`;
+            months[key] = { name: monthLabels[d.getMonth()], income: 0, expense: 0 };
+        }
+
+        for (const t of transactions) {
+            const key = `${t.date.getFullYear()}-${t.date.getMonth()}`;
+            if (!months[key]) continue;
+            if (t.type === 'income') months[key].income += t.amount || 0;
+            else if (t.type === 'expense') months[key].expense += t.amount || 0;
+        }
+
+        return Object.values(months);
+    } catch {
+        return [];
+    }
 }

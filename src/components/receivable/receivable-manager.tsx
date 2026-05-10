@@ -33,7 +33,6 @@ import {
 } from '@/components/ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
-type BusinessType = 'travel' | 'isp';
 type ReceivableStatus = 'unpaid' | 'partial' | 'paid';
 
 type ReceivableRow = {
@@ -43,7 +42,6 @@ type ReceivableRow = {
     amount: number;
     paidAmount: number;
     remainingAmount: number;
-    businessId: BusinessType;
     customerId: string;
     customerName: string;
     status: ReceivableStatus;
@@ -56,7 +54,7 @@ type Option = {
 };
 
 type ReceivableManagerProps = {
-    entries: ReceivableRow[];
+    entries: (ReceivableRow & { businessId?: string })[];
     customers: Option[];
     accounts: Option[];
     filterContext?: string;
@@ -75,7 +73,6 @@ type FormState = {
     date: string;
     dueDate: string;
     amount: string;
-    businessId: BusinessType;
     customerId: string;
     description: string;
     paymentAmount: string;
@@ -86,7 +83,6 @@ const initialForm: FormState = {
     date: new Date().toISOString().slice(0, 10),
     dueDate: new Date().toISOString().slice(0, 10),
     amount: '',
-    businessId: 'travel',
     customerId: '',
     description: '',
     paymentAmount: '0',
@@ -117,10 +113,11 @@ function toReceivableStatus(status: string): ReceivableStatus {
     return 'unpaid';
 }
 
-function normalizeReceivableRows(rows: Awaited<ReturnType<typeof getReceivables>>): ReceivableRow[] {
-    return rows.map((row) => ({
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function normalizeReceivableRows(rows: any[]): ReceivableRow[] {
+    return rows.map(({ businessId: _b, ...row }) => ({
         ...row,
-        status: toReceivableStatus(row.status),
+        status: toReceivableStatus(row.status as string),
     }));
 }
 
@@ -165,7 +162,6 @@ export function ReceivableManager({ entries, customers, accounts, filterContext,
             date: row.date.slice(0, 10),
             dueDate: row.dueDate ? row.dueDate.slice(0, 10) : '',
             amount: String(row.amount),
-            businessId: row.businessId,
             customerId: row.customerId,
             description: row.description || '',
             paymentAmount: '0',
@@ -184,7 +180,7 @@ export function ReceivableManager({ entries, customers, accounts, filterContext,
             date: form.date,
             dueDate: form.dueDate,
             amount: Number(form.amount),
-            businessId: form.businessId,
+            businessId: 'travel' as const,
             customerId: form.customerId,
             description: form.description || undefined,
             paymentAmount: editingId ? Number(form.paymentAmount) : 0,
@@ -363,7 +359,6 @@ export function ReceivableManager({ entries, customers, accounts, filterContext,
                             <thead>
                                 <tr className="border-b border-border bg-muted/30">
                                     <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground">Customer</th>
-                                    <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground">Business</th>
                                     <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground">Due Date</th>
                                     <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground">Status</th>
                                     <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground">Total</th>
@@ -375,7 +370,7 @@ export function ReceivableManager({ entries, customers, accounts, filterContext,
                             <tbody className="divide-y divide-border">
                                 {rows.length === 0 ? (
                                     <tr>
-                                        <td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">
+                                        <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
                                             No receivable records
                                         </td>
                                     </tr>
@@ -383,7 +378,6 @@ export function ReceivableManager({ entries, customers, accounts, filterContext,
                                     rows.map((row) => (
                                         <tr key={row._id} className="hover:bg-muted/30">
                                             <td className="px-4 py-3 font-medium">{row.customerName}</td>
-                                            <td className="px-4 py-3 text-muted-foreground uppercase">{row.businessId}</td>
                                             <td className="px-4 py-3 text-muted-foreground">{row.dueDate ? formatDate(row.dueDate) : '-'}</td>
                                             <td className="px-4 py-3">
                                                 <span className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${statusClassMap[row.status]}`}>
@@ -441,18 +435,6 @@ export function ReceivableManager({ entries, customers, accounts, filterContext,
                             <div className="space-y-2">
                                 <Label>Amount</Label>
                                 <Input type="number" min="0" step="0.01" value={form.amount} onChange={(e) => setForm(p => ({ ...p, amount: e.target.value }))} required />
-                            </div>
-                            <div className="space-y-2">
-                                <Label>Business</Label>
-                                <Select value={form.businessId} onValueChange={(v) => setForm(p => ({ ...p, businessId: v as BusinessType }))}>
-                                    <SelectTrigger>
-                                        <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="travel">Travel</SelectItem>
-                                        <SelectItem value="isp">ISP</SelectItem>
-                                    </SelectContent>
-                                </Select>
                             </div>
                             <div className="space-y-2 sm:col-span-2">
                                 <Label>Customer</Label>

@@ -262,45 +262,52 @@ export default async function DashboardPage() {
               </Link>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[800px] text-sm">
-                <thead>
-                  <tr className="border-b border-border">
-                    <th className="py-3 text-left font-medium text-muted-foreground">Service</th>
-                    <th className="py-3 text-left font-medium text-muted-foreground">Customer</th>
-                    <th className="py-3 text-left font-medium text-muted-foreground">Vendor</th>
-                    <th className="py-3 text-right font-medium text-muted-foreground">Customer Amount</th>
-                    <th className="py-3 text-right font-medium text-muted-foreground">Vendor Amount</th>
-                    <th className="py-3 text-right font-medium text-muted-foreground">Profit</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {stats.agentLedger.slice(0, 10).map((row) => (
-                    <tr key={row._id} className="hover:bg-muted/50">
-                      <td className="py-3">
-                        <p className="font-medium">{row.serviceName}</p>
-                      </td>
-                      <td className="py-3 text-muted-foreground">{row.customerName}</td>
-                      <td className="py-3 text-muted-foreground">{row.vendorName}</td>
-                      <td className="py-3 text-right">
-                        <p className="font-medium">{money(row.customerAmount)}</p>
-                        {row.customerDue > 0 && (
-                          <p className="text-xs text-amber-600">Due: {money(row.customerDue)}</p>
-                        )}
-                      </td>
-                      <td className="py-3 text-right">
-                        <p className="font-medium">{money(row.vendorAmount)}</p>
-                        {row.vendorDue > 0 && (
-                          <p className="text-xs text-rose-600">Due: {money(row.vendorDue)}</p>
-                        )}
-                      </td>
-                      <td className="py-3 text-right">
-                        <span className="font-medium text-emerald-600">{money(row.profit)}</span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="space-y-3">
+              {stats.agentLedger.slice(0, 10).map((row) => (
+                <div key={row._id} className="group flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-xl border border-border bg-card p-4 transition-all hover:border-primary/20 hover:shadow-sm">
+                  <div className="flex items-start gap-4">
+                    <div className="mt-1 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+                      <Briefcase className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <p className="font-semibold text-base">{row.serviceName}</p>
+                      <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
+                        <span className="flex items-center gap-1">
+                          <Users className="h-3.5 w-3.5" />
+                          {row.customerName}
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <Store className="h-3.5 w-3.5" />
+                          {row.vendorName}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex w-full sm:w-auto grid-cols-3 sm:flex-row items-center gap-4 border-t sm:border-t-0 pt-3 sm:pt-0 border-border/50">
+                    <div className="flex-1 sm:flex-none text-left sm:text-right">
+                      <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground mb-0.5">Customer</p>
+                      <p className="font-semibold text-sm">{money(row.customerAmount)}</p>
+                      {row.customerDue > 0 && <p className="text-[10px] text-amber-600 font-medium">Due: {money(row.customerDue)}</p>}
+                    </div>
+                    
+                    <div className="w-px h-8 bg-border/50 hidden sm:block"></div>
+                    
+                    <div className="flex-1 sm:flex-none text-center sm:text-right">
+                      <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground mb-0.5">Vendor</p>
+                      <p className="font-semibold text-sm">{money(row.vendorAmount)}</p>
+                      {row.vendorDue > 0 && <p className="text-[10px] text-rose-600 font-medium">Due: {money(row.vendorDue)}</p>}
+                    </div>
+
+                    <div className="w-px h-8 bg-border/50 hidden sm:block"></div>
+
+                    <div className="flex-1 sm:flex-none text-right">
+                      <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground mb-0.5">Profit</p>
+                      <p className="font-bold text-sm text-emerald-600">+{money(row.profit)}</p>
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </CardContent>

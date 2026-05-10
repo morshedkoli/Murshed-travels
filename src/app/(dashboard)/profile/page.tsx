@@ -21,7 +21,6 @@ export default async function ProfilePage() {
 
             <AdminProfileManager
                 profile={{
-                    email: profile.email,
                     role: profile.role,
                     createdAt: profile.createdAt,
                     updatedAt: profile.updatedAt,

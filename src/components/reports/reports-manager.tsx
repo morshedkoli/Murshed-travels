@@ -35,7 +35,7 @@ type ReportsManagerProps = {
 type FilterForm = {
     fromDate: string;
     toDate: string;
-    businessId: 'all' | 'travel' | 'isp';
+    businessId: 'all' | 'travel';
     trendWindow: '6m' | '12m';
 };
 
@@ -238,23 +238,6 @@ export function ReportsManager({ initialReport }: ReportsManagerProps) {
                             value={filters.toDate}
                             onChange={(event) => setFilters((prev) => ({ ...prev, toDate: event.target.value }))}
                         />
-                    </div>
-
-                    <div className="space-y-2">
-                        <Label>Business</Label>
-                        <Select
-                            value={filters.businessId}
-                            onValueChange={(value) => setFilters((prev) => ({ ...prev, businessId: value as 'all' | 'travel' | 'isp' }))}
-                        >
-                            <SelectTrigger className="w-full">
-                                <SelectValue placeholder="Select business" />
-                            </SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="all">All Businesses</SelectItem>
-                                <SelectItem value="travel">Travel</SelectItem>
-                                <SelectItem value="isp">ISP</SelectItem>
-                            </SelectContent>
-                        </Select>
                     </div>
 
                     <div className="space-y-2">

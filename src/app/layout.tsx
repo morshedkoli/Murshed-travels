@@ -18,14 +18,15 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <head>
+      <head suppressHydrationWarning>
         <script
+          suppressHydrationWarning
           dangerouslySetInnerHTML={{
             __html: `(function(){try{var key='murshed-travels:theme-mode';var saved=localStorage.getItem(key);var mode=(saved==='light'||saved==='dark'||saved==='system')?saved:'system';var isDark=mode==='dark'||(mode==='system'&&window.matchMedia('(prefers-color-scheme: dark)').matches);if(isDark){document.documentElement.classList.add('dark');}else{document.documentElement.classList.remove('dark');}}catch(e){}})();`,
           }}
         />
       </head>
-      <body className={`${manrope.variable} bg-background text-text-primary`}>
+      <body suppressHydrationWarning className={`${manrope.variable} bg-background text-text-primary`}>
         <ToastProvider>{children}</ToastProvider>
       </body>
     </html>

@@ -3,7 +3,7 @@
 import { unstable_noStore as noStore } from 'next/cache';
 import { prisma } from '@/lib/prisma';
 
-type BusinessFilter = 'all' | 'travel' | 'isp';
+type BusinessFilter = 'all' | 'travel';
 type TrendWindow = '6m' | '12m';
 
 export type ReportFilters = {
@@ -98,7 +98,7 @@ function endOfDay(date: Date) {
 }
 
 function normalizeBusiness(value?: string): BusinessFilter {
-    if (value === 'travel' || value === 'isp') return value;
+    if (value === 'travel') return value;
     return 'all';
 }
 
@@ -152,24 +152,23 @@ export async function getReportSnapshot(filters: ReportFilters = {}): Promise<Re
         let totalIncome = 0;
         let totalExpense = 0;
         const categoryMap = new Map<string, { type: 'income' | 'expense'; amount: number; count: number }>();
-        const businessMap = new Map<'travel' | 'isp', { income: number; expense: number; count: number }>();
+        const businessMap = new Map<'travel', { income: number; expense: number; count: number }>();
 
         businessMap.set('travel', { income: 0, expense: 0, count: 0 });
-        businessMap.set('isp', { income: 0, expense: 0, count: 0 });
 
         for (const t of transactions) {
             const effectiveBusiness = t.businessId || 'travel';
 
             if (t.type === 'income') {
                 totalIncome += t.amount || 0;
-                const current = businessMap.get(effectiveBusiness as 'travel' | 'isp');
+                const current = businessMap.get('travel');
                 if (current) {
                     current.income += t.amount || 0;
                     current.count += 1;
                 }
             } else {
                 totalExpense += t.amount || 0;
-                const current = businessMap.get(effectiveBusiness as 'travel' | 'isp');
+                const current = businessMap.get('travel');
                 if (current) {
                     current.expense += t.amount || 0;
                     current.count += 1;
@@ -346,7 +345,7 @@ export async function getReportSnapshot(filters: ReportFilters = {}): Promise<Re
                 date: entry.date.toISOString(),
                 type: entry.type as 'income' | 'expense',
                 category: entry.category,
-                businessId: (entry.businessId as 'travel' | 'isp') || 'travel',
+                businessId: 'travel',
                 amount: entry.amount,
                 accountName: entry.account?.name || 'Unknown Account',
                 partyName: entry.customer?.name || entry.vendor?.name || '-',

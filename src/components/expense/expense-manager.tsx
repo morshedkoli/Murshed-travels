@@ -29,7 +29,6 @@ type ExpenseRow = {
     date: string;
     amount: number;
     category: string;
-    businessId: 'travel' | 'isp';
     accountId: string;
     accountName: string;
     vendorId: string;
@@ -43,7 +42,7 @@ type Option = {
 };
 
 type ExpenseManagerProps = {
-    entries: ExpenseRow[];
+    entries: (ExpenseRow & { businessId?: string })[];
     accounts: Option[];
     vendors: Option[];
 };
@@ -52,7 +51,6 @@ type FormState = {
     date: string;
     amount: string;
     category: string;
-    businessId: 'travel' | 'isp';
     accountId: string;
     vendorId: string;
     description: string;
@@ -64,7 +62,6 @@ const initialForm: FormState = {
     date: new Date().toISOString().slice(0, 10),
     amount: '',
     category: '',
-    businessId: 'travel',
     accountId: '',
     vendorId: 'none',
     description: '',
@@ -85,15 +82,8 @@ function money(value: number) {
     return `৳${value.toLocaleString()}`;
 }
 
-function toBusinessType(value: string): 'travel' | 'isp' {
-    return value === 'isp' ? 'isp' : 'travel';
-}
-
-function normalizeExpenseRows(rows: Awaited<ReturnType<typeof getExpenseEntries>>): ExpenseRow[] {
-    return rows.map((row) => ({
-        ...row,
-        businessId: toBusinessType(row.businessId),
-    }));
+function normalizeExpenseRows(rows: (ExpenseRow & { businessId?: string })[]): ExpenseRow[] {
+    return rows.map(({ businessId: _b, ...row }) => row);
 }
 
 export function ExpenseManager({ entries, accounts, vendors }: ExpenseManagerProps) {
@@ -123,7 +113,6 @@ export function ExpenseManager({ entries, accounts, vendors }: ExpenseManagerPro
     const totalExpense = useMemo(() => filteredRows.reduce((sum, row) => sum + row.amount, 0), [filteredRows]);
     const categoryOptions = useMemo(() => {
         const scoped = rows
-            .filter((row) => row.businessId === form.businessId)
             .map((row) => row.category)
             .filter(Boolean);
 
@@ -133,7 +122,7 @@ export function ExpenseManager({ entries, accounts, vendors }: ExpenseManagerPro
         }
 
         return unique.sort((a, b) => a.localeCompare(b));
-    }, [rows, form.businessId, form.category]);
+    }, [rows, form.category]);
 
     function openCreate() {
         setEditingId(null);
@@ -150,7 +139,6 @@ export function ExpenseManager({ entries, accounts, vendors }: ExpenseManagerPro
             date: row.date.slice(0, 10),
             amount: String(row.amount),
             category: row.category,
-            businessId: row.businessId,
             accountId: row.accountId,
             vendorId: row.vendorId || 'none',
             description: row.description || '',
@@ -172,7 +160,7 @@ export function ExpenseManager({ entries, accounts, vendors }: ExpenseManagerPro
             date: form.date,
             amount: Number(form.amount),
             category: finalCategory,
-            businessId: form.businessId,
+            businessId: 'travel' as const,
             accountId: form.accountId,
             vendorId: form.vendorId === 'none' ? undefined : form.vendorId,
             description: form.description || undefined,
@@ -331,15 +319,6 @@ export function ExpenseManager({ entries, accounts, vendors }: ExpenseManagerPro
                                     <tr key={row._id} className="hover:bg-muted/30 transition-colors">
                                         <td className="px-4 py-3 text-muted-foreground">{formatDate(row.date)}</td>
                                         <td className="px-4 py-3 font-medium">{row.category}</td>
-                                        <td className="hidden px-4 py-3 md:table-cell">
-                                            <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${
-                                                row.businessId === 'travel' 
-                                                    ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' 
-                                                    : 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400'
-                                            }`}>
-                                                {row.businessId}
-                                            </span>
-                                        </td>
                                         <td className="hidden px-4 py-3 text-muted-foreground lg:table-cell">{row.accountName}</td>
                                         <td className="hidden px-4 py-3 text-muted-foreground lg:table-cell">{row.vendorName || '-'}</td>
                                         <td className="px-4 py-3 text-right font-semibold text-red-600">{money(row.amount)}</td>
@@ -444,22 +423,6 @@ export function ExpenseManager({ entries, accounts, vendors }: ExpenseManagerPro
                                         required
                                     />
                                 )}
-                            </div>
-
-                            <div className="space-y-2">
-                                <Label>Business</Label>
-                                <Select
-                                    value={form.businessId}
-                                    onValueChange={(value) => setForm((prev) => ({ ...prev, businessId: value as 'travel' | 'isp' }))}
-                                >
-                                    <SelectTrigger>
-                                        <SelectValue placeholder="Select business" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="travel">Travel</SelectItem>
-                                        <SelectItem value="isp">ISP</SelectItem>
-                                    </SelectContent>
-                                </Select>
                             </div>
 
                             <div className="space-y-2">

@@ -1,17 +1,22 @@
 'use client';
 
 import {
+  BarChart3,
   Briefcase,
   CreditCard,
   LayoutDashboard,
   LogOut,
   Receipt,
   Store,
+  TrendingDown,
+  TrendingUp,
   Users,
   User,
+  UserCog,
   Wallet,
   X,
   ChevronRight,
+  Banknote,
 } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
@@ -33,7 +38,22 @@ const navGroups = [
     items: [
       { href: '/receivable', label: 'Receivable', icon: CreditCard },
       { href: '/payable', label: 'Payable', icon: Receipt },
+      { href: '/income', label: 'Income', icon: TrendingUp },
+      { href: '/expense', label: 'Expense', icon: TrendingDown },
       { href: '/accounts', label: 'Accounts', icon: Wallet },
+    ],
+  },
+  {
+    label: 'Analytics',
+    items: [
+      { href: '/reports', label: 'Reports', icon: BarChart3 },
+    ],
+  },
+  {
+    label: 'HR',
+    items: [
+      { href: '/employees', label: 'Employees', icon: UserCog },
+      { href: '/salary', label: 'Salary', icon: Banknote },
     ],
   },
   {

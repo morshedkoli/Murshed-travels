@@ -446,10 +446,40 @@ export function VendorProfileView({ vendor, services, ledger, accounts, transact
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                <Card className="border-border/60"><CardContent className="p-5"><p className="text-xs uppercase tracking-wider text-muted-foreground">Listed Services</p><p className="mt-2 text-2xl font-bold">{templates.length}</p></CardContent></Card>
-                <Card className="border-blue-200/60 bg-blue-50/30"><CardContent className="p-5"><p className="text-xs uppercase tracking-wider text-blue-700/80">Pending/Active</p><p className="mt-2 text-2xl font-bold text-blue-700">{stats.pendingCount}</p></CardContent></Card>
-                <Card className="border-emerald-200/60 bg-emerald-50/30"><CardContent className="p-5"><p className="text-xs uppercase tracking-wider text-emerald-700/80">Revenue</p><p className="mt-2 text-2xl font-bold text-emerald-700">{money(stats.totalRevenue)}</p></CardContent></Card>
-                <Card className="border-rose-200/60 bg-rose-50/30"><CardContent className="p-5"><p className="text-xs uppercase tracking-wider text-rose-700/80">Vendor Due</p><p className="mt-2 text-2xl font-bold text-rose-700">{money(vendorDue)}</p></CardContent></Card>
+                <Card className="bg-gradient-to-br from-slate-50 to-transparent dark:from-slate-900/10 border-slate-100 dark:border-slate-900/20">
+                    <CardHeader className="pb-2">
+                        <CardTitle className="text-[11px] font-semibold tracking-wider text-slate-600 dark:text-slate-400 uppercase">Listed Services</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                        <p className="text-3xl font-bold">{templates.length}</p>
+                    </CardContent>
+                </Card>
+                <Card className="bg-gradient-to-br from-blue-50 to-transparent dark:from-blue-900/10 border-blue-100 dark:border-blue-900/20">
+                    <CardHeader className="pb-2">
+                        <CardTitle className="text-[11px] font-semibold tracking-wider text-blue-600 dark:text-blue-400 uppercase">Pending / Active</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                        <p className="text-3xl font-bold text-blue-700 dark:text-blue-400">{stats.pendingCount}</p>
+                    </CardContent>
+                </Card>
+                <Card className="bg-gradient-to-br from-emerald-50 to-transparent dark:from-emerald-900/10 border-emerald-100 dark:border-emerald-900/20">
+                    <CardHeader className="pb-2">
+                        <CardTitle className="text-[11px] font-semibold tracking-wider text-emerald-600 dark:text-emerald-400 uppercase">Total Revenue</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                        <p className="text-3xl font-bold text-emerald-700 dark:text-emerald-400">{money(stats.totalRevenue)}</p>
+                    </CardContent>
+                </Card>
+                <Card className={`bg-gradient-to-br ${vendorDue > 0 ? 'from-rose-50 dark:from-rose-900/10 border-rose-100 dark:border-rose-900/20' : 'from-slate-50 dark:from-slate-900/10 border-slate-100 dark:border-slate-900/20'}`}>
+                    <CardHeader className="pb-2">
+                        <CardTitle className={`text-[11px] font-semibold tracking-wider uppercase ${vendorDue > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-600 dark:text-slate-400'}`}>Vendor Due</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                        <p className={`text-3xl font-bold ${vendorDue > 0 ? 'text-rose-700 dark:text-rose-400' : 'text-slate-700 dark:text-slate-300'}`}>
+                            {vendorDue > 0 ? money(vendorDue) : 'Settled'}
+                        </p>
+                    </CardContent>
+                </Card>
             </div>
 
             <Tabs defaultValue="catalog" className="space-y-4">
